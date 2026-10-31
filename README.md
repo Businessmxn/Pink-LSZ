@@ -12,4 +12,4 @@ Only current clan members are accepted. Install it, log in, and add your RuneSca
 Everything goes to the dashboard over HTTPS and nowhere else, along with your character name and account hash. Screenshots can show public chat; private messages are hidden.
 
 ## Credits
-Adapted from the Valiance Clan plugin by Encryptiron (BSD 2-Clause). The original notice is in `LICENSE`.
+Adapted from the Valiance Clan plugin by Encryptiron (BSD 2-Clause). See `ATTRIBUTION.md`.
