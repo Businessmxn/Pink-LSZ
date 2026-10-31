@@ -1,0 +1,389 @@
+package com.pinklsz.net;
+
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import com.pinklsz.PinkLszConfig;
+import com.pinklsz.PinkLszPlugin;
+import java.io.IOException;
+import java.util.ArrayDeque;
+import java.util.Collections;
+import java.util.Deque;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import javax.inject.Inject;
+import javax.inject.Singleton;
+import net.runelite.api.ChatMessageType;
+import net.runelite.api.Client;
+import net.runelite.api.GameState;
+import net.runelite.api.Player;
+import net.runelite.api.gameval.VarbitID;
+import net.runelite.client.callback.ClientThread;
+import net.runelite.client.config.RuneScapeProfileType;
+import okhttp3.Call;
+import okhttp3.Callback;
+import okhttp3.HttpUrl;
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Everything sent to the dashboard goes through here, one request at a time. A failed request is retried
+ * after a pause, and anything still failing after a few tries is dropped.
+ */
+@Singleton
+public class Dashboard
+{
+	private static final Logger log = LoggerFactory.getLogger(Dashboard.class);
+	private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
+	private static final int MAX_TRIES = 4;
+	private static final int RETRY_DELAY_SECONDS = 15;
+	private static final int MAX_QUEUED = 300;
+	private static final long MAX_QUEUED_CHARS = 24_000_000L; // screenshots are big
+	private static final long INFO_GAP_MS = 20_000L;
+
+	@Inject
+	private OkHttpClient http;
+
+	@Inject
+	private PinkLszConfig config;
+
+	@Inject
+	private Client client;
+
+	@Inject
+	private ClientThread clientThread;
+
+	@Inject
+	private ScheduledExecutorService executor;
+
+	private static final class Upload
+	{
+		final Kind kind;
+		final String json;
+		final int generation;
+		int tries;
+
+		Upload(Kind kind, String json, int generation)
+		{
+			this.kind = kind;
+			this.json = json;
+			this.generation = generation;
+		}
+	}
+
+	private final Deque<Upload> queue = new ArrayDeque<>();
+	private long queuedChars;
+	private boolean busy;
+	private int generation; // bumped on logout, so uploads from the last login are never sent
+
+	private final Map<Kind, Long> lastInfo = new ConcurrentHashMap<>();
+	private boolean warnedUrl;
+	private boolean warnedRefused;
+	private boolean connected;
+
+	private volatile long dropMin = 1_000_000L;
+	private volatile Set<Integer> watched = Collections.emptySet();
+
+	/** Drops worth at least this much get a screenshot. */
+	public long dropMin()
+	{
+		return dropMin;
+	}
+
+	/** Items the clan is looking for right now (e.g. a bingo board); these get a screenshot too. */
+	public boolean isWatched(int itemId)
+	{
+		return watched.contains(itemId);
+	}
+
+	/** Can be called from any thread. */
+	public void send(Kind kind, JsonObject data)
+	{
+		if (client.isClientThread())
+		{
+			enqueue(kind, data);
+		}
+		else
+		{
+			clientThread.invoke(() -> enqueue(kind, data));
+		}
+	}
+
+	private void enqueue(Kind kind, JsonObject data)
+	{
+		Player me = client.getLocalPlayer();
+		if (me == null || me.getName() == null)
+		{
+			return;
+		}
+		JsonObject body = new JsonObject();
+		body.addProperty("kind", kind.wire);
+		body.addProperty("rsn", me.getName());
+		body.addProperty("account_hash", client.getAccountHash());
+		body.addProperty("account_type", client.getVarbitValue(VarbitID.IRONMAN));
+		body.addProperty("profile", RuneScapeProfileType.getCurrent(client).name());
+		body.addProperty("version", PinkLszPlugin.VERSION);
+		body.addProperty("sent_at", System.currentTimeMillis());
+		body.add("data", data);
+
+		Upload u;
+		synchronized (queue)
+		{
+			u = new Upload(kind, body.toString(), generation);
+			queue.add(u);
+			queuedChars += u.json.length();
+			while (queue.size() > 1 && (queue.size() > MAX_QUEUED || queuedChars > MAX_QUEUED_CHARS))
+			{
+				queuedChars -= queue.poll().json.length();
+			}
+		}
+		next();
+	}
+
+	private void next()
+	{
+		Upload u;
+		synchronized (queue)
+		{
+			if (busy || queue.isEmpty())
+			{
+				return;
+			}
+			busy = true;
+			u = queue.poll();
+			queuedChars -= u.json.length();
+		}
+		upload(u);
+	}
+
+	private void finished()
+	{
+		synchronized (queue)
+		{
+			busy = false;
+		}
+		next();
+	}
+
+	/** Put it back at the front and wait before trying again. */
+	private void retryLater(Upload u)
+	{
+		synchronized (queue)
+		{
+			if (++u.tries < MAX_TRIES && u.generation == generation)
+			{
+				queue.addFirst(u);
+				queuedChars += u.json.length();
+			}
+		}
+		executor.schedule(this::finished, RETRY_DELAY_SECONDS, TimeUnit.SECONDS);
+	}
+
+	private HttpUrl endpoint()
+	{
+		String base = config.dashboardUrl() == null ? "" : config.dashboardUrl().trim();
+		if (!base.contains("://"))
+		{
+			base = "https://" + base;
+		}
+		HttpUrl url = HttpUrl.parse(base);
+		if (url == null)
+		{
+			return null;
+		}
+		boolean local = "localhost".equals(url.host()) || "127.0.0.1".equals(url.host());
+		if (!url.isHttps() && !local)
+		{
+			return null;
+		}
+		return url.newBuilder().encodedPath("/api/app.php").setQueryParameter("a", "pl_ingest").build();
+	}
+
+	private void upload(Upload u)
+	{
+		HttpUrl url = endpoint();
+		if (url == null)
+		{
+			if (!warnedUrl)
+			{
+				warnedUrl = true;
+				note("The dashboard address in the Pink LSZ settings isn't valid (it must start with https://).");
+			}
+			finished();
+			return;
+		}
+		Request request = new Request.Builder()
+			.url(url)
+			.header("User-Agent", "PinkLSZ-RuneLite/" + PinkLszPlugin.VERSION)
+			.post(RequestBody.create(JSON, u.json))
+			.build();
+		http.newCall(request).enqueue(new Callback()
+		{
+			@Override
+			public void onFailure(Call call, IOException e)
+			{
+				log.debug("{} failed: {}", u.kind, e.getMessage());
+				retryLater(u);
+			}
+
+			@Override
+			public void onResponse(Call call, Response response)
+			{
+				boolean retry = false;
+				try (Response r = response)
+				{
+					String text = r.body() == null ? "" : r.body().string();
+					retry = handle(u, r.code(), text);
+				}
+				catch (IOException e)
+				{
+					retry = true;
+				}
+				if (retry)
+				{
+					retryLater(u);
+				}
+				else
+				{
+					finished();
+				}
+			}
+		});
+	}
+
+	/** Returns true if the upload should be tried again later. */
+	private boolean handle(Upload u, int code, String text)
+	{
+		if (code == 401 || code == 403)
+		{
+			if (!warnedRefused)
+			{
+				warnedRefused = true;
+				note(parse(text).has("error") ? parse(text).get("error").getAsString() : "The dashboard didn't accept this character.");
+			}
+			return false;
+		}
+		if (code == 429 || code >= 500)
+		{
+			return true;
+		}
+		if (code >= 400)
+		{
+			log.debug("{} rejected ({}): {}", u.kind, code, text);
+			return false;
+		}
+		warnedRefused = false;
+		JsonObject reply = parse(text);
+		learn(reply);
+		report(u.kind, reply);
+		return false;
+	}
+
+	/** The dashboard only answers with JSON, but a proxy error page shouldn't break anything. */
+	private static JsonObject parse(String text)
+	{
+		try
+		{
+			return new JsonParser().parse(text).getAsJsonObject();
+		}
+		catch (RuntimeException e)
+		{
+			return new JsonObject();
+		}
+	}
+
+	private void learn(JsonObject reply)
+	{
+		if (reply.has("drop_min"))
+		{
+			dropMin = reply.get("drop_min").getAsLong();
+		}
+		if (reply.has("watch") && reply.get("watch").isJsonArray())
+		{
+			JsonArray ids = reply.get("watch").getAsJsonArray();
+			Set<Integer> w = new HashSet<>();
+			for (int i = 0; i < ids.size(); i++)
+			{
+				w.add(ids.get(i).getAsInt());
+			}
+			watched = w;
+		}
+	}
+
+	private void report(Kind kind, JsonObject reply)
+	{
+		switch (kind)
+		{
+			case HELLO:
+				if (!connected)
+				{
+					connected = true;
+					boolean linked = !reply.has("linked") || reply.get("linked").getAsBoolean();
+					info(linked ? "Connected to the dashboard." : "Connected. Add this character's name to your dashboard profile so your data shows up there.");
+				}
+				if (reply.has("need_clog") && reply.get("need_clog").getAsBoolean())
+				{
+					note("Open your collection log once and it will sync to the dashboard.");
+				}
+				break;
+			case PERSONAL_BEST:
+			case PERSONAL_BESTS_SAVED:
+				// only a personal best that went to staff is worth a message
+				if (reply.has("pb") && "queued".equals(reply.get("pb").getAsString()) && reply.has("message"))
+				{
+					note(reply.get("message").getAsString());
+				}
+				break;
+			default:
+				// big things go out in several requests, so one line every so often is enough
+				long now = System.currentTimeMillis();
+				Long last = lastInfo.put(kind, now);
+				if (last == null || now - last > INFO_GAP_MS)
+				{
+					info("Sent " + kind.label + " to the dashboard.");
+				}
+		}
+	}
+
+	/** Forget everything queued and per-login state. */
+	public void reset()
+	{
+		synchronized (queue)
+		{
+			generation++;
+			queue.clear();
+			queuedChars = 0;
+		}
+		connected = false;
+		lastInfo.clear();
+	}
+
+	/** Routine messages, only shown when "Show messages in chat" is on. */
+	public void info(String text)
+	{
+		if (config.chatNotes())
+		{
+			note(text);
+		}
+	}
+
+	public void note(String text)
+	{
+		clientThread.invokeLater(() ->
+		{
+			if (client.getGameState() == GameState.LOGGED_IN)
+			{
+				client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "<col=ef3d9a>Pink LSZ:</col> " + text, "PinkLSZ");
+			}
+		});
+	}
+}
