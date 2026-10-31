@@ -11,7 +11,6 @@ public enum Kind
 	COLLECTION_LOG_ITEM("clog_new", "a new collection log item"),
 	COMBAT_ACHIEVEMENTS("ca", "your combat achievements"),
 	PERSONAL_BEST("pb", "a personal best"),
-	PERSONAL_BESTS_SAVED("pb_stored", "your saved personal bests"),
 	DEATH("death", "a death");
 
 	final String wire;

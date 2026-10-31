@@ -172,7 +172,6 @@ public class PinkLszPlugin extends Plugin
 			kills.sendSnapshot();
 			drops.sendHistory();
 			achievements.sendSnapshot();
-			pbs.sendStored();
 			return true;
 		});
 	}

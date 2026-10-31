@@ -336,7 +336,6 @@ public class Dashboard
 				}
 				break;
 			case PERSONAL_BEST:
-			case PERSONAL_BESTS_SAVED:
 				// only a personal best that went to staff is worth a message
 				if (reply.has("pb") && "queued".equals(reply.get("pb").getAsString()) && reply.has("message"))
 				{

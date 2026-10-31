@@ -1,6 +1,5 @@
 package com.pinklsz.collect;
 
-import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.pinklsz.net.Dashboard;
 import com.pinklsz.net.Kind;
@@ -9,7 +8,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.inject.Inject;
 import javax.inject.Singleton;
-import net.runelite.client.config.ConfigManager;
 import net.runelite.api.ChatMessageType;
 import net.runelite.api.events.ChatMessage;
 import net.runelite.api.events.GameTick;
@@ -26,6 +24,8 @@ public class PbCollector
 
 	// "Your Vorkath kill count is: 12."  /  "Your completed Theatre of Blood count is: 3."  /  "Your Prifddinas Agility Course lap count is: 4."
 	private static final Pattern COUNT = Pattern.compile("^Your (?:completed )?(.+?)(?: (?:kill|harvest|lap|completion|success))? count is: ?[\\d,]+\\.?$", Pattern.CASE_INSENSITIVE);
+	// "Your completion count for TzHaar-Ket-Rak's Fourth Challenge is: 3."
+	private static final Pattern COUNT_FOR = Pattern.compile("^Your (?:completion|kill) count for (.+?) is: ?[\\d,]+\\.?$", Pattern.CASE_INSENSITIVE);
 	// "Fight duration: 1:23.40 (new personal best)"  /  "Team size: 3 players Duration: 24:11.40 (new personal best)"  /  "... total completion time: 20:11.40 (new personal best)"
 	private static final Pattern NEW_PB = Pattern.compile("(?:duration|completion time|subdued in|time)[: ]+(\\d+(?::\\d+)*(?:\\.\\d+)?).{0,40}\\(new personal best\\)", Pattern.CASE_INSENSITIVE);
 	private static final Pattern TEAM = Pattern.compile("Team size: (?:(\\d+) players?|Solo)", Pattern.CASE_INSENSITIVE);
@@ -38,66 +38,6 @@ public class PbCollector
 
 	@Inject
 	private Shots shots;
-
-	@Inject
-	private ConfigManager configManager;
-
-	private static final String PB_GROUP = "personalbest";
-	private static final int PER_REQUEST = 40;
-
-	/** The personal bests saved by RuneLite's chat commands, sent once per login. */
-	public void sendStored()
-	{
-		String profile = configManager.getRSProfileKey();
-		if (profile == null)
-		{
-			return;
-		}
-		JsonArray batch = new JsonArray();
-		for (String key : configManager.getRSProfileConfigurationKeys(PB_GROUP, profile, ""))
-		{
-			String name = key.contains(".") ? key.substring(key.lastIndexOf('.') + 1) : key;
-			String v = configManager.getConfiguration(PB_GROUP, profile, name);
-			if (v == null || v.isEmpty())
-			{
-				continue;
-			}
-			double seconds;
-			try
-			{
-				seconds = Double.parseDouble(v);
-			}
-			catch (NumberFormatException ignored)
-			{
-				continue;
-			}
-			if (seconds <= 0)
-			{
-				continue;
-			}
-			JsonObject r = new JsonObject();
-			r.addProperty("name", name);
-			r.addProperty("seconds", seconds);
-			batch.add(r);
-			if (batch.size() >= PER_REQUEST)
-			{
-				flush(batch);
-				batch = new JsonArray();
-			}
-		}
-		flush(batch);
-	}
-
-	private void flush(JsonArray batch)
-	{
-		if (batch.size() == 0)
-		{
-			return;
-		}
-		JsonObject d = new JsonObject();
-		d.add("records", batch);
-		dashboard.send(Kind.PERSONAL_BESTS_SAVED, d);
-	}
 
 	private volatile int tick;
 
@@ -118,6 +58,10 @@ public class PbCollector
 		}
 		String msg = Text.removeTags(e.getMessage());
 		Matcher c = COUNT.matcher(msg);
+		if (!c.matches())
+		{
+			c = COUNT_FOR.matcher(msg);
+		}
 		if (c.matches())
 		{
 			boss = c.group(1).trim();
