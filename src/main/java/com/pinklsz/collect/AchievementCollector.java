@@ -92,8 +92,10 @@ public class AchievementCollector
 	private void readAndSend()
 	{
 		TreeSet<Integer> done = new TreeSet<>();
-		for (int enumId : TIER_ENUMS)
+		JsonArray all = new JsonArray(); // every task the game has, as [task id, tier (0 = Easy … 5 = Grandmaster)], so the site counts the real total
+		for (int ti = 0; ti < TIER_ENUMS.length; ti++)
 		{
+			int enumId = TIER_ENUMS[ti];
 			EnumComposition tier = client.getEnum(enumId);
 			if (tier == null)
 			{
@@ -103,6 +105,10 @@ public class AchievementCollector
 			{
 				StructComposition s = client.getStructComposition(structId);
 				int id = s.getIntValue(TASK_ID_PARAM);
+				JsonArray one = new JsonArray();
+				one.add(id);
+				one.add(ti);
+				all.add(one);
 				int slot = id / 32;
 				if (slot >= TASK_VARPS.length)
 				{
@@ -128,6 +134,7 @@ public class AchievementCollector
 		}
 		JsonObject d = new JsonObject();
 		d.add("ids", ids);
+		d.add("all", all);
 		dashboard.send(Kind.COMBAT_ACHIEVEMENTS, d);
 	}
 

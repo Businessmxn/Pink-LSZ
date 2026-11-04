@@ -11,7 +11,8 @@ public enum Kind
 	COLLECTION_LOG_ITEM("clog_new", "a new collection log item"),
 	COMBAT_ACHIEVEMENTS("ca", "your combat achievements"),
 	PERSONAL_BEST("pb", "a personal best"),
-	DEATH("death", "a death");
+	DEATH("death", "a death"),
+	GEAR("gear", null); // stats, worn gear and inventory for the DPS calculator: sent quietly
 
 	final String wire;
 	final String label;

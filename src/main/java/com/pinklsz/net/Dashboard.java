@@ -89,6 +89,9 @@ public class Dashboard
 	private boolean warnedUrl;
 	private boolean warnedRefused;
 	private boolean connected;
+	private static final long REFUSED_PAUSE_MS = 3 * 60 * 60 * 1000L; // a character the clan site refuses is left alone for a few hours
+	private volatile String refusedName;
+	private volatile long refusedAt;
 
 	private volatile long dropMin = 1_000_000L;
 	private volatile Set<Integer> watched = Collections.emptySet();
@@ -124,6 +127,10 @@ public class Dashboard
 		if (me == null || me.getName() == null)
 		{
 			return;
+		}
+		if (refusedName != null && refusedName.equalsIgnoreCase(me.getName()) && System.currentTimeMillis() - refusedAt < REFUSED_PAUSE_MS)
+		{
+			return; // not a clan member: nothing is sent for this character
 		}
 		JsonObject body = new JsonObject();
 		body.addProperty("kind", kind.wire);
@@ -190,6 +197,11 @@ public class Dashboard
 
 	private HttpUrl endpoint()
 	{
+		return endpoint("pl_ingest");
+	}
+
+	private HttpUrl endpoint(String action)
+	{
 		String base = config.dashboardUrl() == null ? "" : config.dashboardUrl().trim();
 		if (!base.contains("://"))
 		{
@@ -205,7 +217,7 @@ public class Dashboard
 		{
 			return null;
 		}
-		return url.newBuilder().encodedPath("/api/app.php").setQueryParameter("a", "pl_ingest").build();
+		return url.newBuilder().encodedPath("/api/app.php").setQueryParameter("a", action).build();
 	}
 
 	private void upload(Upload u)
@@ -265,6 +277,33 @@ public class Dashboard
 	{
 		if (code == 401 || code == 403)
 		{
+			String who = null;
+			try
+			{
+				who = parse(u.json).get("rsn").getAsString();
+			}
+			catch (RuntimeException e)
+			{
+				// no name in the upload
+			}
+			if (code == 403 && who != null)
+			{
+				refusedName = who;
+				refusedAt = System.currentTimeMillis();
+				final String mark = "\"rsn\":" + new com.google.gson.JsonPrimitive(who).toString();
+				synchronized (queue)
+				{
+					queue.removeIf(q ->
+					{
+						boolean same = q.json.contains(mark);
+						if (same)
+						{
+							queuedChars -= q.json.length();
+						}
+						return same;
+					});
+				}
+			}
 			if (!warnedRefused)
 			{
 				warnedRefused = true;
@@ -342,15 +381,86 @@ public class Dashboard
 					note(reply.get("message").getAsString());
 				}
 				break;
+			case GEAR:
+				break; // happens on its own in the background: no chat line
 			default:
 				// big things go out in several requests, so one line every so often is enough
 				long now = System.currentTimeMillis();
-				Long last = lastInfo.put(kind, now);
-				if (last == null || now - last > INFO_GAP_MS)
+				boolean bulk = kind == Kind.KILL_COUNTS || kind == Kind.DROP_TOTALS || kind == Kind.COMBAT_ACHIEVEMENTS;
+				// the three that go out together at login share one line
+				Long last = lastInfo.put(bulk ? Kind.KILL_COUNTS : kind, now);
+				if (last == null || now - last > (bulk ? 90_000L : INFO_GAP_MS))
 				{
-					info("Sent " + kind.label + " to the dashboard.");
+					info(bulk ? "Sent your saved Drops, KCs & CAs to the Clan Dashboard." : "Sent " + kind.label + " to the dashboard.");
 				}
 		}
+	}
+
+	/**
+	 * One request that wants an answer (the TeamFinder panel), sent straight away and never retried.
+	 * Can be called from any thread; the callback comes from a background thread. On a failure the reply has an "error".
+	 */
+	public void call(String action, JsonObject data, java.util.function.Consumer<JsonObject> done)
+	{
+		clientThread.invoke(() ->
+		{
+			Player me = client.getLocalPlayer();
+			if (client.getGameState() != GameState.LOGGED_IN || me == null || me.getName() == null)
+			{
+				done.accept(error("Log in to the game first."));
+				return;
+			}
+			HttpUrl url = endpoint(action);
+			if (url == null)
+			{
+				done.accept(error("The dashboard address in the Pink LSZ settings isn't valid."));
+				return;
+			}
+			JsonObject body = data == null ? new JsonObject() : data;
+			body.addProperty("rsn", me.getName());
+			body.addProperty("account_hash", client.getAccountHash());
+			body.addProperty("world", client.getWorld());
+			body.addProperty("version", PinkLszPlugin.VERSION);
+			Request request = new Request.Builder()
+				.url(url)
+				.header("User-Agent", "PinkLSZ-RuneLite/" + PinkLszPlugin.VERSION)
+				.post(RequestBody.create(JSON, body.toString()))
+				.build();
+			http.newCall(request).enqueue(new Callback()
+			{
+				@Override
+				public void onFailure(Call call, IOException e)
+				{
+					done.accept(error("Couldn't reach the dashboard."));
+				}
+
+				@Override
+				public void onResponse(Call call, Response response)
+				{
+					JsonObject reply;
+					try (Response r = response)
+					{
+						reply = parse(r.body() == null ? "" : r.body().string());
+						if (r.code() >= 400 && !reply.has("error"))
+						{
+							reply = error("The dashboard answered with an error (" + r.code() + ").");
+						}
+					}
+					catch (IOException e)
+					{
+						reply = error("Couldn't read the dashboard's answer.");
+					}
+					done.accept(reply);
+				}
+			});
+		});
+	}
+
+	private static JsonObject error(String text)
+	{
+		JsonObject o = new JsonObject();
+		o.addProperty("error", text);
+		return o;
 	}
 
 	/** Forget everything queued and per-login state. */
@@ -373,6 +483,22 @@ public class Dashboard
 		{
 			note(text);
 		}
+	}
+
+	/** A message from the clan leaders, shown whatever the "show messages in chat" setting is. {@code shown} runs once it is really in the chat. */
+	public void announce(String text, Runnable shown)
+	{
+		clientThread.invokeLater(() ->
+		{
+			if (client.getGameState() == GameState.LOGGED_IN)
+			{
+				client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "<col=ef3d9a>Pink LSZ announcement:</col> " + net.runelite.client.util.Text.removeTags(text), "PinkLSZ");
+				if (shown != null)
+				{
+					shown.run();
+				}
+			}
+		});
 	}
 
 	public void note(String text)

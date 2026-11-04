@@ -4,6 +4,7 @@ import com.google.inject.Provides;
 import com.pinklsz.collect.AchievementCollector;
 import com.pinklsz.collect.DeathCollector;
 import com.pinklsz.collect.DropCollector;
+import com.pinklsz.collect.GearCollector;
 import com.pinklsz.collect.KillCollector;
 import com.pinklsz.collect.LogCollector;
 import com.pinklsz.collect.PbCollector;
@@ -24,19 +25,28 @@ import net.runelite.client.eventbus.EventBus;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
+import net.runelite.client.ui.NavigationButton;
+import net.runelite.client.ui.ClientToolbar;
+import net.runelite.client.util.ImageUtil;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
 /** Based on the Valiance Clan plugin by Encryptiron (BSD 2-Clause, see LICENSE). */
 @PluginDescriptor(
 	name = "Pink LSZ",
-	description = "For Pink LSZ clan members: sends your drops, kill counts, collection log, combat achievements, personal bests and deaths to the clan dashboard.",
+	description = "For Pink LSZ clan members: a TeamFinder panel for group content, and sends your drops, kill counts, collection log, combat achievements, personal bests and deaths to the clan dashboard.",
 	tags = {"clan", "pink", "lsz", "collection log", "combat achievements", "kill count", "personal best", "deaths"}
 )
 public class PinkLszPlugin extends Plugin
 {
-	public static final String VERSION = "1.0.0";
+	public static final String VERSION = "1.1.0";
 
 	@Inject
 	private Client client;
+
+	@Inject
+	private net.runelite.client.config.ConfigManager configManager;
 
 	@Inject
 	private EventBus eventBus;
@@ -71,6 +81,25 @@ public class PinkLszPlugin extends Plugin
 	@Inject
 	private DeathCollector deaths;
 
+	@Inject
+	private GearCollector gear;
+
+	@Inject
+	private PinkLszConfig config;
+
+	@Inject
+	private ClientToolbar clientToolbar;
+
+	@Inject
+	private LobbyPanel lobbyPanel;
+
+	@Inject
+	private ScheduledExecutorService executor;
+
+	private NavigationButton navButton;
+	private ScheduledFuture<?> lobbyPoll;
+	private ScheduledFuture<?> announcePoll;
+
 	private boolean loading;
 
 	@Provides
@@ -83,16 +112,80 @@ public class PinkLszPlugin extends Plugin
 	protected void startUp()
 	{
 		eventBus.register(drops);
+		// the dashboard moved from dashboard.pinkosrs.com to pinkosrs.com: swap an address saved from an older version
+		if (config.dashboardUrl().toLowerCase().contains("dashboard.pinkosrs.com"))
+		{
+			configManager.setConfiguration(PinkLszConfig.GROUP, "dashboardUrl", "https://pinkosrs.com");
+		}
 		eventBus.register(kills);
 		eventBus.register(log);
 		eventBus.register(achievements);
 		eventBus.register(pbs);
 		eventBus.register(shots);
 		eventBus.register(deaths);
+		eventBus.register(gear);
+		// the TeamFinder side panel, with the clan's icon on the toolbar
+		lobbyPanel.build();
+		navButton = NavigationButton.builder()
+			.tooltip("Pink LSZ TeamFinder")
+			.icon(ImageUtil.loadImageResource(PinkLszPlugin.class, "icon.png"))
+			.priority(7)
+			.panel(lobbyPanel)
+			.build();
+		if (!config.hideSidePanel())
+		{
+			clientToolbar.addNavigation(navButton);
+		}
+		// check the lobbies while the panel is open, or while you are in one (the host's check-in keeps it alive)
+		lobbyPoll = executor.scheduleWithFixedDelay(() ->
+		{
+			try
+			{
+				if (client.getGameState() == GameState.LOGGED_IN && lobbyPanel.wantsPolling())
+				{
+					lobbyPanel.refresh();
+				}
+			}
+			catch (RuntimeException e)
+			{
+				// an exception would stop a repeating task for good
+			}
+		}, 5, 5, TimeUnit.SECONDS);
+		// messages the clan leaders send from the dashboard: asked for once a minute while logged in
+		announcePoll = executor.scheduleWithFixedDelay(this::checkAnnouncements, 15, 20, TimeUnit.SECONDS);
 		if (client.getGameState() == GameState.LOGGED_IN)
 		{
 			tryLoadPlayer();
 		}
+	}
+
+	private void checkAnnouncements()
+	{
+		if (!config.showAnnouncements() || client.getGameState() != GameState.LOGGED_IN || !session.settled())
+		{
+			return;
+		}
+		dashboard.call("pl_announce", new JsonObject(), reply ->
+		{
+			if (!reply.has("messages") || !reply.get("messages").isJsonArray())
+			{
+				return;
+			}
+			for (com.google.gson.JsonElement e : reply.getAsJsonArray("messages"))
+			{
+				JsonObject m = e.getAsJsonObject();
+				int id = m.get("id").getAsInt();
+				// shown in the chat first; only then does the site count it as delivered (so one that failed to show comes again)
+				dashboard.announce(m.get("text").getAsString(), () ->
+				{
+					com.google.gson.JsonArray ack = new com.google.gson.JsonArray();
+					ack.add(id);
+					JsonObject body = new JsonObject();
+					body.add("ack", ack);
+					dashboard.call("pl_announce", body, r -> { });
+				});
+			}
+		});
 	}
 
 	@Override
@@ -105,6 +198,22 @@ public class PinkLszPlugin extends Plugin
 		eventBus.unregister(pbs);
 		eventBus.unregister(shots);
 		eventBus.unregister(deaths);
+		eventBus.unregister(gear);
+		if (lobbyPoll != null)
+		{
+			lobbyPoll.cancel(false);
+			lobbyPoll = null;
+		}
+		if (announcePoll != null)
+		{
+			announcePoll.cancel(false);
+			announcePoll = null;
+		}
+		if (navButton != null)
+		{
+			clientToolbar.removeNavigation(navButton);
+			navButton = null;
+		}
 		session.loggedOut();
 		loading = false;
 		dashboard.reset();
@@ -113,6 +222,20 @@ public class PinkLszPlugin extends Plugin
 		achievements.forget();
 		pbs.forget();
 		deaths.forget();
+	}
+
+	@Subscribe
+	public void onConfigChanged(net.runelite.client.events.ConfigChanged e)
+	{
+		if (navButton == null || !PinkLszConfig.GROUP.equals(e.getGroup()) || !"hideSidePanel".equals(e.getKey()))
+		{
+			return;
+		}
+		clientToolbar.removeNavigation(navButton);
+		if (!config.hideSidePanel())
+		{
+			clientToolbar.addNavigation(navButton);
+		}
 	}
 
 	@Subscribe
@@ -131,6 +254,7 @@ public class PinkLszPlugin extends Plugin
 			achievements.forget();
 			pbs.forget();
 			deaths.forget();
+			gear.forget();
 			loading = false;
 		}
 	}
@@ -172,6 +296,9 @@ public class PinkLszPlugin extends Plugin
 			kills.sendSnapshot();
 			drops.sendHistory();
 			achievements.sendSnapshot();
+			gear.markDirty();
+			// load the team list a few seconds later, once the hello above has linked this account
+			executor.schedule(() -> lobbyPanel.refresh(), 6, TimeUnit.SECONDS);
 			return true;
 		});
 	}

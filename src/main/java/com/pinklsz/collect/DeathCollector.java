@@ -24,6 +24,7 @@ import net.runelite.client.util.Text;
 @Singleton
 public class DeathCollector
 {
+	private static final int COLOSSEUM_REGION = 7216; // the Fortis Colosseum arena
 	private static final int ENGAGED_TICKS = 50; // about 30 seconds
 
 	// raid bosses count towards their raid
@@ -31,6 +32,13 @@ public class DeathCollector
 		{"chambers_of_xeric", "tekton", "vanguard", "vespula", "ice demon", "muttadile", "vasa nistirio", "skeletal mystic", "lizardman shaman", "deathly ranger", "deathly mage", "great olm", "abyssal portal"},
 		{"theatre_of_blood", "the maiden of sugadinti", "pestilent bloat", "nylocas vasilias", "sotetseg", "xarpus", "verzik vitur"},
 		{"tombs_of_amascut", "ba-ba", "kephri", "akkha", "zebak", "tumeken's warden", "elidinis' warden", "elidinis' warden"},
+		// the Colosseum's wave enemies count as Sol Heredit (only names that live in the Colosseum alone, so a death elsewhere isn't mistaken for one)
+		{"sol_heredit", "shockwave colossus", "javelin colossus", "serpent shaman", "jaguar warrior", "minotaur", "manticore"},
+		// bosses that fight under other names than the one on the kill count
+		{"grotesque_guardians", "grotesque guardians", "dusk", "dawn"},
+		{"the_gauntlet", "crystalline hunllef"},
+		{"the_corrupted_gauntlet", "corrupted hunllef"},
+		{"the_royal_titans", "branda the fire queen", "eldric the ice king"},
 		// names from guides, not checked in game
 		{"the_fractured_archive", "archive guardian", "bork", "smorks", "ezekiel", "dreadnoth", "dreadnoth the jellied", "moia", "xarth", "dagonhai", "dagon'hai", "ocellus"},
 	};
@@ -141,7 +149,8 @@ public class DeathCollector
 		{
 			for (NPC n : client.getTopLevelWorldView().npcs())
 			{
-				if (n.getInteracting() == me && n.getName() != null)
+				// pets follow you around and "interact" with you too: they have no combat level and are never what killed you
+				if (n.getInteracting() == me && n.getName() != null && n.getCombatLevel() > 0)
 				{
 					seen = n.getName();
 					boss = bossOf(n);
@@ -155,6 +164,11 @@ public class DeathCollector
 		if (boss == null && lastBoss != null && tick - lastBossTick <= ENGAGED_TICKS)
 		{
 			boss = lastBoss;
+		}
+		// anything that kills you inside the Colosseum counts as Sol Heredit, whatever it is called
+		if (boss == null && inColosseum(me))
+		{
+			boss = "sol_heredit";
 		}
 		lastBoss = null;
 		lastTarget = new WeakReference<>(null);
@@ -176,6 +190,19 @@ public class DeathCollector
 			}
 			dashboard.send(Kind.DEATH, d);
 		});
+	}
+
+	private boolean inColosseum(Player me)
+	{
+		try
+		{
+			net.runelite.api.coords.WorldPoint wp = net.runelite.api.coords.WorldPoint.fromLocalInstance(client, me.getLocalLocation());
+			return wp != null && wp.getRegionID() == COLOSSEUM_REGION;
+		}
+		catch (RuntimeException ex)
+		{
+			return false;
+		}
 	}
 
 	public void forget()
