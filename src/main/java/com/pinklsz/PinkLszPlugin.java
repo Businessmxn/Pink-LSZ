@@ -40,7 +40,7 @@ import java.util.concurrent.TimeUnit;
 )
 public class PinkLszPlugin extends Plugin
 {
-	public static final String VERSION = "1.1.0";
+	public static final String VERSION = "1.1.1";
 
 	@Inject
 	private Client client;
@@ -141,7 +141,8 @@ public class PinkLszPlugin extends Plugin
 		{
 			try
 			{
-				if (client.getGameState() == GameState.LOGGED_IN && lobbyPanel.wantsPolling())
+				GameState st = client.getGameState();
+				if ((st == GameState.LOGGED_IN || st == GameState.HOPPING || st == GameState.LOADING || st == GameState.CONNECTION_LOST) && lobbyPanel.wantsPolling())
 				{
 					lobbyPanel.refresh();
 				}
@@ -152,7 +153,7 @@ public class PinkLszPlugin extends Plugin
 			}
 		}, 5, 5, TimeUnit.SECONDS);
 		// messages the clan leaders send from the dashboard: asked for once a minute while logged in
-		announcePoll = executor.scheduleWithFixedDelay(this::checkAnnouncements, 15, 20, TimeUnit.SECONDS);
+		announcePoll = executor.scheduleWithFixedDelay(this::checkAnnouncements, 10, 8, TimeUnit.SECONDS);
 		if (client.getGameState() == GameState.LOGGED_IN)
 		{
 			tryLoadPlayer();
@@ -161,7 +162,7 @@ public class PinkLszPlugin extends Plugin
 
 	private void checkAnnouncements()
 	{
-		if (!config.showAnnouncements() || client.getGameState() != GameState.LOGGED_IN || !session.settled())
+		if ((!config.showAnnouncements() && !config.showTeamAlerts()) || client.getGameState() != GameState.LOGGED_IN || !session.settled())
 		{
 			return;
 		}
@@ -175,8 +176,23 @@ public class PinkLszPlugin extends Plugin
 			{
 				JsonObject m = e.getAsJsonObject();
 				int id = m.get("id").getAsInt();
+				boolean team = m.has("kind") && "team".equals(m.get("kind").getAsString());
+				if (!team && !config.showAnnouncements())
+				{
+					continue; // clan announcements are switched off: left for later
+				}
+				if (team && !config.showTeamAlerts())
+				{
+					// TeamFinder alerts are switched off: counted as delivered without showing, so they do not come back
+					com.google.gson.JsonArray skip = new com.google.gson.JsonArray();
+					skip.add(id);
+					JsonObject sb = new JsonObject();
+					sb.add("ack", skip);
+					dashboard.call("pl_announce", sb, r -> { });
+					continue;
+				}
 				// shown in the chat first; only then does the site count it as delivered (so one that failed to show comes again)
-				dashboard.announce(m.get("text").getAsString(), () ->
+				dashboard.announce(m.get("text").getAsString(), team, () ->
 				{
 					com.google.gson.JsonArray ack = new com.google.gson.JsonArray();
 					ack.add(id);

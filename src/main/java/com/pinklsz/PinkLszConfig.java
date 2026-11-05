@@ -43,6 +43,17 @@ public interface PinkLszConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "showTeamAlerts",
+		name = "Show TeamFinder alerts",
+		description = "Show a chat line when a clan member starts a team. This is separate from clan announcements.",
+		position = 7
+	)
+	default boolean showTeamAlerts()
+	{
+		return true;
+	}
+
+	@ConfigItem(
 		keyName = "showAnnouncements",
 		name = "Show clan announcements",
 		description = "Show messages the clan leaders send from the dashboard in your chatbox.",

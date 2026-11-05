@@ -10,6 +10,7 @@ import javax.inject.Inject;
 import javax.inject.Singleton;
 import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
+import net.runelite.api.Player;
 import net.runelite.api.events.ChatMessage;
 import net.runelite.api.events.GameTick;
 import net.runelite.client.eventbus.Subscribe;
@@ -38,6 +39,10 @@ public class PbCollector
 	private static final Pattern ANY_TIME = Pattern.compile("(?:fight duration|duration)[: ]+(\\d+(?::\\d+)*(?:\\.\\d+)?)", Pattern.CASE_INSENSITIVE);
 	// the name in the time's own line, for the times that have no kill-count line after them: "Challenge complete: Bork. Duration: 2:12" / "The Fractured Archive: Total completion time: 21:40" / "Theatre of Blood total completion time: 27:39"
 	private static final Pattern LINE_ROOM = Pattern.compile("^Challenge complete: (.+?)\\.", Pattern.CASE_INSENSITIVE);
+	// "Wave 'The Maiden of Sugadinti' (Hard Mode) complete! Duration: 2:08.40": a Theatre of Blood room (the duration can come in the same message or the next)
+	private static final Pattern WAVE = Pattern.compile("Wave '(.+?)'(?:\\s*\\((.*?)\\))?\\s*complete", Pattern.CASE_INSENSITIVE);
+	private static final String[][] TOB_ROOMS = {{"maiden", "Maiden"}, {"bloat", "Bloat"}, {"nylocas", "Nylocas"}, {"sotetseg", "Sotetseg"}, {"xarpus", "Xarpus"}, {"verzik", "Verzik"}};
+	private static final String[] TFA_ROOMS = {"archive guardian", "ezekiel", "bork", "moia", "dreadnoth", "dagon", "xarth", "ocellus"};
 	private static final Pattern LINE_TOTAL = Pattern.compile("^(.+?):? (?:total )?(?:completion time|duration)", Pattern.CASE_INSENSITIVE);
 	// group content where the game doesn't print the team size next to the time: the players in the instance are the team
 	private static final Pattern GROUP = Pattern.compile("theatre of blood|tombs of amascut|fractured archive|chambers of xeric|colosseum", Pattern.CASE_INSENSITIVE);
@@ -61,10 +66,13 @@ public class PbCollector
 	private int bossTick;
 	private int lastTeam; // the last "Team size: N players" line the game printed, which can come in its own message
 	private int lastTeamTick = -1000;
+	private String waveBoss; // the Theatre of Blood room named in the last "Wave ... complete" line
+	private int waveTick = -1000;
 	private String lineBoss; // a name taken from the time's own line
 
 	private String time;
 	private int team;
+	private boolean teamCounted; // the size was counted from nearby players rather than given by the game
 	private String raw;
 	private int timeTick;
 	private boolean newPb;
@@ -82,6 +90,20 @@ public class PbCollector
 		{
 			lastTeam = ts.group(1) == null ? 1 : Integer.parseInt(ts.group(1));
 			lastTeamTick = tick;
+		}
+		Matcher wv = WAVE.matcher(msg);
+		if (wv.find())
+		{
+			String w = wv.group(1).toLowerCase();
+			for (String[] r : TOB_ROOMS)
+			{
+				if (w.contains(r[0]))
+				{
+					boolean hard = wv.group(2) != null && wv.group(2).toLowerCase().contains("hard");
+					waveBoss = "Theatre of Blood: " + (hard ? "Hard Mode: " : "") + r[1];
+					waveTick = tick;
+				}
+			}
 		}
 		Matcher c = COUNT.matcher(msg);
 		if (!c.matches())
@@ -124,6 +146,7 @@ public class PbCollector
 			raw = msg;
 			timeTick = tick;
 			team = 0;
+			teamCounted = false;
 			lineBoss = null;
 			Matcher ln = LINE_ROOM.matcher(msg);
 			if (ln.find())
@@ -138,16 +161,45 @@ public class PbCollector
 					lineBoss = ln.group(1).trim();
 				}
 			}
+			if (waveBoss != null && tick - waveTick <= WINDOW_TICKS && !TOTAL_TIME.matcher(msg).find() && !CHALLENGE_TIME.matcher(msg).find())
+			{
+				lineBoss = waveBoss; // a Theatre of Blood room (the raid's own total is never a room)
+				waveBoss = null;
+			}
+			else if (lineBoss != null)
+			{
+				String lb = lineBoss.toLowerCase();
+				for (String r : TFA_ROOMS)
+				{
+					if (lb.contains(r))
+					{
+						lineBoss = "Fractured Archive: " + lineBoss; // a Fractured Archive boss
+						break;
+					}
+				}
+			}
 			Matcher t = TEAM.matcher(msg);
 			if (t.find())
 			{
 				team = t.group(1) == null ? 1 : Integer.parseInt(t.group(1));
+				teamCounted = false;
 			}
-			else if (GROUP.matcher(msg).find() || (boss != null && GROUP.matcher(boss).find()))
+			else if (msg.toLowerCase().contains("colosseum") || (boss != null && boss.toLowerCase().contains("colosseum")) || (lineBoss != null && lineBoss.toLowerCase().contains("colosseum")))
+			{
+				team = 1; // the Colosseum is always solo
+				teamCounted = false;
+			}
+			else if (GROUP.matcher(msg).find() || (boss != null && GROUP.matcher(boss).find()) || (lineBoss != null && GROUP.matcher(lineBoss).find()))
 			{
 				// not in the message: count the players in the instance (everyone there is on the team)
-				int n = client.getPlayers().size();
-				team = Math.max(1, Math.min(n, 100));
+				// (this is a last resort, and the site is told the size was counted so staff can check it)
+				int n = 0;
+				for (Player ignored : client.getTopLevelWorldView().players())
+				{
+					n++; // the set has no size(), so count them
+				}
+				team = n >= 1 && n <= 100 ? n : 0; // a silly count is never sent
+				teamCounted = team > 0;
 			}
 			trySend();
 		}
@@ -171,7 +223,7 @@ public class PbCollector
 		{
 			if (newPb || lineBoss != null || (boss != null && tick - bossTick <= WINDOW_TICKS * 2))
 			{
-				send(boss != null && tick - bossTick <= WINDOW_TICKS * 2 ? boss : (lineBoss != null ? lineBoss : ""));
+				send(isRoom(lineBoss) ? lineBoss : (boss != null && tick - bossTick <= WINDOW_TICKS * 2 ? boss : (lineBoss != null ? lineBoss : "")));
 			}
 			else
 			{
@@ -215,10 +267,19 @@ public class PbCollector
 
 	private void trySend()
 	{
-		if (time != null && boss != null && Math.abs(timeTick - bossTick) <= WINDOW_TICKS)
+		if (time != null && isRoom(lineBoss))
+		{
+			send(lineBoss); // a room's own time is never filed under the whole raid
+		}
+		else if (time != null && boss != null && Math.abs(timeTick - bossTick) <= WINDOW_TICKS)
 		{
 			send(boss);
 		}
+	}
+
+	private static boolean isRoom(String n)
+	{
+		return n != null && (n.startsWith("Theatre of Blood: ") || n.startsWith("Fractured Archive: "));
 	}
 
 	private void send(String name)
@@ -232,8 +293,13 @@ public class PbCollector
 			if (lastTeam > 0 && Math.abs(lastTeamTick - timeTick) <= 30)
 			{
 				team = lastTeam;
+				teamCounted = false;
 			}
 			d.addProperty("team_size", team);
+			if (teamCounted)
+			{
+				d.addProperty("team_counted", true);
+			}
 			d.addProperty("raw", raw == null ? "" : raw);
 			d.addProperty("is_pb", newPb);
 			if (newPb)
@@ -241,6 +307,30 @@ public class PbCollector
 				waiting = d;
 				shotTries = 0;
 				capture();
+			}
+			else if (isRoom(name))
+			{
+				// a room time that isn't a personal best only needs a screenshot if it would take 1st or 2nd on the clan record: ask the site first
+				final JsonObject check = new JsonObject();
+				check.addProperty("boss", name);
+				check.addProperty("time", d.get("time").getAsString());
+				check.addProperty("team_size", team);
+				dashboard.call("pl_pb_check", check, reply ->
+				{
+					if (reply != null && reply.has("top") && reply.get("top").getAsBoolean())
+					{
+						synchronized (PbCollector.this)
+						{
+							shotTries = 0;
+							waitingUntil = 0; // the next game tick takes the screenshot
+							waiting = d;
+						}
+					}
+					else
+					{
+						dashboard.send(Kind.PERSONAL_BEST, d);
+					}
+				});
 			}
 			else
 			{
@@ -252,6 +342,7 @@ public class PbCollector
 		lineBoss = null;
 		raw = null;
 		team = 0;
+		teamCounted = false;
 		newPb = false;
 	}
 
@@ -262,6 +353,7 @@ public class PbCollector
 		lineBoss = null;
 		raw = null;
 		team = 0;
+		teamCounted = false;
 		newPb = false;
 	}
 }

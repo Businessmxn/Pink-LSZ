@@ -32,6 +32,7 @@ import javax.swing.BoxLayout;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
@@ -40,6 +41,7 @@ import javax.swing.JPanel;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import javax.swing.plaf.basic.BasicComboBoxUI;
+import net.runelite.client.party.PartyService;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.PluginPanel;
 import net.runelite.client.util.ImageUtil;
@@ -70,9 +72,11 @@ public class LobbyPanel extends PluginPanel
 		final boolean mass;
 		final List<String> modes = new ArrayList<>();
 		final boolean inv;
+		final boolean ffa; // has a Split / FFA choice
 
 		Act(JsonObject o)
 		{
+			ffa = !o.has("ffa") || o.get("ffa").getAsBoolean();
 			name = o.get("name").getAsString();
 			min = o.get("min").getAsInt();
 			max = o.get("max").getAsInt();
@@ -110,6 +114,9 @@ public class LobbyPanel extends PluginPanel
 	@Inject
 	private Dashboard dashboard;
 
+	@Inject
+	private PartyService partyService; // RuneLite's own party (the one the Party Panel plugin shows)
+
 	private final JPanel list = new JPanel();
 	private final JLabel status = new JLabel(" ");
 	private final JLabel openCount = new JLabel("Open teams");
@@ -118,8 +125,11 @@ public class LobbyPanel extends PluginPanel
 	private final JComboBox<Size> size = new JComboBox<>();
 	private final JTextField invocation = new JTextField();
 	private final JTextField note = new JTextField();
+	private final JTextField hub = new JTextField();
+	private final JCheckBox ffa = new JCheckBox("FFA");
 	private final JPanel modeRow = new JPanel();
 	private final JPanel invRow = new JPanel();
+	private final JPanel ffaRow = new JPanel();
 
 	private boolean built;
 	private boolean actsLoaded;
@@ -127,6 +137,7 @@ public class LobbyPanel extends PluginPanel
 	private volatile boolean inLobby; // hosting or joined: keep checking in even with the panel closed
 	private String hostedMembers = "";
 	private long hostedId = -1;
+	private String goneHow = ""; // why the dashboard says you are no longer in a team
 	private String hostName = "";
 	private boolean fullTold;
 
@@ -510,10 +521,30 @@ public class LobbyPanel extends PluginPanel
 		form.add(caption("TEAM SIZE"));
 		styleCombo(size);
 		form.add(size);
-		form.add(caption("NOTE (OPTIONAL)"));
+		form.add(caption("PARTY HUB (OPTIONAL)"));
+		styleField(hub, "Party passphrase");
+		hub.setToolTipText("The RuneLite party passphrase for this team. You are put into it when you create the team, and players who press Join are put into it too");
+		form.add(hub);
+		form.add(caption("NOTES (OPTIONAL)"));
 		styleField(note, "Learner friendly, KC/gear");
 		note.setToolTipText("Optional, e.g. \"Learner friendly\" or \"300+ KC, scythe preferred\"");
 		form.add(note);
+		stack(ffaRow);
+		ffaRow.setOpaque(false);
+		ffaRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+		ffa.setOpaque(false);
+		ffa.setForeground(TEXT);
+		ffa.setFont(F(Font.BOLD, 13f));
+		ffa.setFocusPainted(false);
+		ffa.setIcon(boxIcon(false));
+		ffa.setSelectedIcon(boxIcon(true));
+		ffa.setIconTextGap(8);
+		ffa.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+		ffa.setToolTipText("Tick for free for all loot. Unticked shows as Split");
+		ffa.setAlignmentX(Component.LEFT_ALIGNMENT);
+		ffaRow.add(gap(6));
+		ffaRow.add(ffa);
+		form.add(ffaRow);
 		form.add(gap(10));
 		JButton create = pill("Create team", PINK, false);
 		create.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -591,6 +622,8 @@ public class LobbyPanel extends PluginPanel
 		Object sz = size.getSelectedItem();
 		d.addProperty("size", sz instanceof Size ? ((Size) sz).value : a.max);
 		d.addProperty("note", note.getText());
+		d.addProperty("hub", hub.getText().trim());
+		d.addProperty("ffa", a.ffa && ffa.isSelected());
 		send("create", d);
 		note.setText("");
 	}
@@ -627,6 +660,7 @@ public class LobbyPanel extends PluginPanel
 			actsLoaded = true;
 			activityChanged();
 		}
+		goneHow = reply.has("gone") && reply.get("gone").isJsonObject() && reply.get("gone").getAsJsonObject().has("how") ? reply.get("gone").getAsJsonObject().get("how").getAsString() : "";
 		JsonArray lobbies = reply.has("lobbies") && reply.get("lobbies").isJsonArray() ? reply.get("lobbies").getAsJsonArray() : new JsonArray();
 		announce(op, lobbies);
 		render(lobbies);
@@ -650,7 +684,11 @@ public class LobbyPanel extends PluginPanel
 		{
 			if (hostedId != -1 && "list".equals(op))
 			{
-				dashboard.note("You are no longer in the team (it closed, or you were away from the game for too long).");
+				String how = goneHow;
+				dashboard.note("away".equals(how) ? "You were removed from the team: the dashboard heard nothing from your game for 45 seconds."
+					: "removed".equals(how) ? "A moderator removed the team."
+					: "closed".equals(how) ? "The host closed the team."
+					: "You are no longer in the team.");
 			}
 			hostedId = -1;
 			hostName = "";
@@ -667,9 +705,14 @@ public class LobbyPanel extends PluginPanel
 		if (id != hostedId)
 		{
 			// first time we see this team: no "joined" lines for people already in it
+			if (hosting && "create".equals(op))
+			{
+				joinPartyHub(mineTeam, true);
+			}
 			if (!hosting && "join".equals(op))
 			{
 				String w = mineTeam.get("world").isJsonNull() ? "" : " on world " + mineTeam.get("world").getAsInt();
+				joinPartyHub(mineTeam, false);
 				dashboard.note("Joined " + mineTeam.get("host").getAsString() + "'s " + mineTeam.get("activity").getAsString() + " team" + w + ". Meet them in game.");
 			}
 			fullTold = full;
@@ -718,6 +761,49 @@ public class LobbyPanel extends PluginPanel
 		return "Team full (" + count + "/" + size + "): Time to go!" + world;
 	}
 
+	/** Pressing Join also puts you in the host's RuneLite party (the one Party Panel shows), if the host listed a party hub. */
+	private void joinPartyHub(JsonObject team, boolean created)
+	{
+		String hubName = team.has("hub") && !team.get("hub").isJsonNull() ? team.get("hub").getAsString().trim() : "";
+		if (hubName.isEmpty())
+		{
+			return;
+		}
+		try
+		{
+			if (!hubName.equals(partyService.getPartyPassphrase()))
+			{
+				partyService.changeParty(hubName);
+			}
+		}
+		catch (RuntimeException e)
+		{
+			dashboard.note("Could not join the party hub \"" + hubName + "\". Join it from the Party Panel with that passphrase.");
+		}
+	}
+
+	/** A clear tick box: an outlined square, filled pink with a white tick when it is on. */
+	private static ImageIcon boxIcon(boolean on)
+	{
+		BufferedImage img = new BufferedImage(20, 20, BufferedImage.TYPE_INT_ARGB);
+		Graphics2D g = img.createGraphics();
+		smooth(g);
+		g.setColor(on ? PINK : FIELD);
+		g.fillRoundRect(1, 1, 17, 17, 6, 6);
+		g.setColor(on ? PINK : MUTED);
+		g.setStroke(new BasicStroke(2f));
+		g.drawRoundRect(1, 1, 17, 17, 6, 6);
+		if (on)
+		{
+			g.setColor(Color.WHITE);
+			g.setStroke(new BasicStroke(2.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+			g.drawLine(5, 10, 8, 13);
+			g.drawLine(8, 13, 14, 6);
+		}
+		g.dispose();
+		return new ImageIcon(img);
+	}
+
 	private static String joinNames(JsonArray a)
 	{
 		StringBuilder sb = new StringBuilder();
@@ -755,6 +841,11 @@ public class LobbyPanel extends PluginPanel
 		}
 		modeRow.setVisible(!a.modes.isEmpty());
 		invRow.setVisible(a.inv);
+		ffaRow.setVisible(a.ffa);
+		if (!a.ffa)
+		{
+			ffa.setSelected(false);
+		}
 		for (int i = a.min; i <= a.max; i++)
 		{
 			size.addItem(new Size(i));
@@ -825,6 +916,10 @@ public class LobbyPanel extends PluginPanel
 		if (!l.get("invocation").isJsonNull())
 		{
 			chips.add(chip("Inv " + l.get("invocation").getAsInt(), new Color(0x4AD1A0)));
+		}
+		if (l.has("ffa") && !l.get("ffa").isJsonNull())
+		{
+			chips.add(chip(l.get("ffa").getAsBoolean() ? "FFA" : "Split", new Color(0xFF7BAC)));
 		}
 		if (!l.get("world").isJsonNull())
 		{

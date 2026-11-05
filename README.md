@@ -14,6 +14,7 @@ Everything goes to the dashboard over HTTPS and nowhere else, along with your ch
 ## TeamFinder
 Click the Pink LSZ icon in the RuneLite sidebar to find or make a team for group content (Chambers of Xeric, Theatre of Blood, Tombs of Amascut, The Fractured Archive, the God Wars bosses, Nex, Royal Titans, Yama and more).
 - Pick an activity, mode and team size (or Mass), add an optional note, and create the team. Others see it in the panel and in the clan Discord.
+- Tick **FFA** if the team is free for all (otherwise it shows as Split). Add a **Party Hub** passphrase and anyone who presses Join is put into that RuneLite party automatically (works with the Party Panel plugin).
 - Game-chat lines tell you when someone joins or leaves, when the host changes, and when the team is full and which world to hop to.
 - If the host leaves, the next player to have joined takes over. A player whose plugin goes quiet for 45 seconds is removed from the team.
 - Clan moderators can remove a team.
@@ -25,6 +26,7 @@ Messages leaders send from the dashboard appear in your chatbox.
 - **Dashboard address**: leave as `https://pinkosrs.com`.
 - **Show messages in chat**: a line when something is sent.
 - **Show clan announcements**: leader messages in chat (on by default).
+- **Show TeamFinder alerts**: a chat line when a clan member starts a team (on by default, separate from clan announcements).
 - **Hide Side Panel**: removes the TeamFinder button from the sidebar (off by default).
 - Options to turn off death tracking and gear sharing.
 

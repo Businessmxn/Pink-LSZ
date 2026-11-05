@@ -400,13 +400,23 @@ public class Dashboard
 	 * One request that wants an answer (the TeamFinder panel), sent straight away and never retried.
 	 * Can be called from any thread; the callback comes from a background thread. On a failure the reply has an "error".
 	 */
+	private volatile String callName; // the character from the last time the player was logged in
+	private volatile long callHash;
+
 	public void call(String action, JsonObject data, java.util.function.Consumer<JsonObject> done)
 	{
 		clientThread.invoke(() ->
 		{
 			Player me = client.getLocalPlayer();
-			if (client.getGameState() != GameState.LOGGED_IN || me == null || me.getName() == null)
+			GameState gs = client.getGameState();
+			if (gs == GameState.LOGGED_IN && me != null && me.getName() != null)
 			{
+				callName = me.getName();
+				callHash = client.getAccountHash();
+			}
+			else if (!((gs == GameState.HOPPING || gs == GameState.LOADING || gs == GameState.CONNECTION_LOST) && callName != null))
+			{
+				// only a real log out stops the check-ins: a world hop or loading screen keeps the team alive using the name from before
 				done.accept(error("Log in to the game first."));
 				return;
 			}
@@ -417,8 +427,8 @@ public class Dashboard
 				return;
 			}
 			JsonObject body = data == null ? new JsonObject() : data;
-			body.addProperty("rsn", me.getName());
-			body.addProperty("account_hash", client.getAccountHash());
+			body.addProperty("rsn", callName);
+			body.addProperty("account_hash", callHash);
 			body.addProperty("world", client.getWorld());
 			body.addProperty("version", PinkLszPlugin.VERSION);
 			Request request = new Request.Builder()
@@ -486,13 +496,20 @@ public class Dashboard
 	}
 
 	/** A message from the clan leaders, shown whatever the "show messages in chat" setting is. {@code shown} runs once it is really in the chat. */
-	public void announce(String text, Runnable shown)
+	/** "Name has started a ... team": only the player's name is pink. */
+	private static String teamLine(String text)
+	{
+		int i = text.indexOf(" has started a ");
+		return i > 0 ? "<col=ef3d9a>" + text.substring(0, i) + "</col>" + text.substring(i) : text;
+	}
+
+	public void announce(String text, boolean team, Runnable shown)
 	{
 		clientThread.invokeLater(() ->
 		{
 			if (client.getGameState() == GameState.LOGGED_IN)
 			{
-				client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", "<col=ef3d9a>Pink LSZ announcement:</col> " + net.runelite.client.util.Text.removeTags(text), "PinkLSZ");
+				client.addChatMessage(ChatMessageType.GAMEMESSAGE, "", (team ? teamLine(net.runelite.client.util.Text.removeTags(text)) : "<col=ef3d9a>Pink LSZ announcement:</col> " + net.runelite.client.util.Text.removeTags(text)), "PinkLSZ");
 				if (shown != null)
 				{
 					shown.run();
