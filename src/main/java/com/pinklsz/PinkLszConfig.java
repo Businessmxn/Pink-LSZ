@@ -54,6 +54,17 @@ public interface PinkLszConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "notifyInvites",
+		name = "Notify me of team invites",
+		description = "Send a RuneLite notification when a host invites you to a team while you are marked available. It includes the host's world and its region.",
+		position = 8
+	)
+	default boolean notifyInvites()
+	{
+		return true;
+	}
+
+	@ConfigItem(
 		keyName = "showAnnouncements",
 		name = "Show clan announcements",
 		description = "Show messages the clan leaders send from the dashboard in your chatbox.",

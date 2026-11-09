@@ -201,7 +201,6 @@ public class LogCollector
 			return;
 		}
 		phase = Phase.CLOSED;
-		dashboard.info("Read your collection log (" + seen.size() + " items).");
 		long sum = 0;
 		for (Map.Entry<Integer, Integer> e : seen.entrySet())
 		{

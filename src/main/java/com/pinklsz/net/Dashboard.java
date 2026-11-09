@@ -200,6 +200,13 @@ public class Dashboard
 		return endpoint("pl_ingest");
 	}
 
+	/** A page on the website (e.g. "/bingo/3"), built from the dashboard address in the settings; null if that address isn't valid. */
+	public String siteUrl(String path)
+	{
+		HttpUrl u = endpoint("x");
+		return u == null ? null : u.newBuilder().encodedPath(path).query(null).build().toString();
+	}
+
 	private HttpUrl endpoint(String action)
 	{
 		String base = config.dashboardUrl() == null ? "" : config.dashboardUrl().trim();
@@ -367,7 +374,10 @@ public class Dashboard
 				{
 					connected = true;
 					boolean linked = !reply.has("linked") || reply.get("linked").getAsBoolean();
-					info(linked ? "Connected to the dashboard." : "Connected. Add this character's name to your dashboard profile so your data shows up there.");
+					if (!linked)
+					{
+						note("Add this character's name to your dashboard profile so your data shows up there.");
+					}
 				}
 				if (reply.has("need_clog") && reply.get("need_clog").getAsBoolean())
 				{
@@ -382,17 +392,10 @@ public class Dashboard
 				}
 				break;
 			case GEAR:
-				break; // happens on its own in the background: no chat line
+			case DROP:
+				break; // happens on its own in the background (a drop is sent every time you get one): no chat line
 			default:
-				// big things go out in several requests, so one line every so often is enough
-				long now = System.currentTimeMillis();
-				boolean bulk = kind == Kind.KILL_COUNTS || kind == Kind.DROP_TOTALS || kind == Kind.COMBAT_ACHIEVEMENTS;
-				// the three that go out together at login share one line
-				Long last = lastInfo.put(bulk ? Kind.KILL_COUNTS : kind, now);
-				if (last == null || now - last > (bulk ? 90_000L : INFO_GAP_MS))
-				{
-					info(bulk ? "Sent your saved Drops, KCs & CAs to the Clan Dashboard." : "Sent " + kind.label + " to the dashboard.");
-				}
+				break; // a normal send says nothing: chat only speaks up when something is wrong
 		}
 	}
 
@@ -401,6 +404,13 @@ public class Dashboard
 	 * Can be called from any thread; the callback comes from a background thread. On a failure the reply has an "error".
 	 */
 	private volatile String callName; // the character from the last time the player was logged in
+
+	/** The character name from the last time the player was logged in (null before the first login). */
+	public String playerName()
+	{
+		return callName;
+	}
+
 	private volatile long callHash;
 
 	public void call(String action, JsonObject data, java.util.function.Consumer<JsonObject> done)
@@ -429,7 +439,10 @@ public class Dashboard
 			JsonObject body = data == null ? new JsonObject() : data;
 			body.addProperty("rsn", callName);
 			body.addProperty("account_hash", callHash);
-			body.addProperty("world", client.getWorld());
+			if (!body.has("world")) // a world the caller chose (hosting a team elsewhere) is kept; otherwise it is the world you are on
+			{
+				body.addProperty("world", client.getWorld());
+			}
 			body.addProperty("version", PinkLszPlugin.VERSION);
 			Request request = new Request.Builder()
 				.url(url)
@@ -466,6 +479,60 @@ public class Dashboard
 		});
 	}
 
+	private final Map<String, java.awt.image.BufferedImage> roleIcons = new ConcurrentHashMap<>();
+	private final Set<String> roleIconAsked = ConcurrentHashMap.newKeySet();
+
+	/** The clan rank icon (the same picture the dashboard shows), or null while it is still being fetched; whenLoaded runs once it arrives. */
+	public java.awt.image.BufferedImage roleIcon(String role, Runnable whenLoaded)
+	{
+		if (role == null || !role.matches("[a-z0-9_\\-]{1,40}"))
+		{
+			return null;
+		}
+		java.awt.image.BufferedImage have = roleIcons.get(role);
+		if (have != null || !roleIconAsked.add(role))
+		{
+			return have;
+		}
+		HttpUrl base = endpoint("x");
+		if (base == null)
+		{
+			return null;
+		}
+		HttpUrl url = base.newBuilder().encodedPath("/icons/roles/" + role + ".png").query(null).build();
+		Request request = new Request.Builder().url(url).header("User-Agent", "PinkLSZ-RuneLite/" + PinkLszPlugin.VERSION).build();
+		http.newCall(request).enqueue(new Callback()
+		{
+			@Override
+			public void onFailure(Call call, IOException e)
+			{
+				roleIconAsked.remove(role);
+			}
+
+			@Override
+			public void onResponse(Call call, Response response)
+			{
+				try (Response r = response)
+				{
+					if (r.isSuccessful() && r.body() != null)
+					{
+						java.awt.image.BufferedImage img = javax.imageio.ImageIO.read(r.body().byteStream());
+						if (img != null)
+						{
+							roleIcons.put(role, img);
+							whenLoaded.run();
+						}
+					}
+				}
+				catch (IOException e)
+				{
+					roleIconAsked.remove(role);
+				}
+			}
+		});
+		return null;
+	}
+
 	private static JsonObject error(String text)
 	{
 		JsonObject o = new JsonObject();
@@ -496,10 +563,14 @@ public class Dashboard
 	}
 
 	/** A message from the clan leaders, shown whatever the "show messages in chat" setting is. {@code shown} runs once it is really in the chat. */
-	/** "Name has started a ... team": only the player's name is pink. */
+	/** "Name has started a ... team" / "Name is available to +1 ...": only the player's name is pink. */
 	private static String teamLine(String text)
 	{
 		int i = text.indexOf(" has started a ");
+		if (i <= 0)
+		{
+			i = text.indexOf(" is available to +1 ");
+		}
 		return i > 0 ? "<col=ef3d9a>" + text.substring(0, i) + "</col>" + text.substring(i) : text;
 	}
 

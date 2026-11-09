@@ -34,6 +34,8 @@ public class DeathCollector
 		{"tombs_of_amascut", "ba-ba", "kephri", "akkha", "zebak", "tumeken's warden", "elidinis' warden", "elidinis' warden"},
 		// the Colosseum's wave enemies count as Sol Heredit (only names that live in the Colosseum alone, so a death elsewhere isn't mistaken for one)
 		{"sol_heredit", "shockwave colossus", "javelin colossus", "serpent shaman", "jaguar warrior", "minotaur", "manticore"},
+		// the Ferox Enclave PvP tutor: dying to him in the training challenges is recorded as a death to Pete Kayer
+		{"pete_kayer", "pete kayer"},
 		// bosses that fight under other names than the one on the kill count
 		{"grotesque_guardians", "grotesque guardians", "dusk", "dawn"},
 		{"the_gauntlet", "crystalline hunllef"},

@@ -13,6 +13,7 @@ import net.runelite.api.Client;
 import net.runelite.api.Player;
 import net.runelite.api.events.ChatMessage;
 import net.runelite.api.events.GameTick;
+import net.runelite.api.events.HitsplatApplied;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.util.Text;
 
@@ -25,7 +26,7 @@ public class PbCollector
 {
 	private static final int WINDOW_TICKS = 6;
 	private static final int RETRY_TICKS = 8;
-	private static final int MAX_SHOT_TRIES = 6;
+	private static final int MAX_SHOT_TRIES = 12;
 
 	// "Your Vorkath kill count is: 12."  /  "Your completed Theatre of Blood count is: 3."  /  "Your Prifddinas Agility Course lap count is: 4."
 	private static final Pattern COUNT = Pattern.compile("^Your (?:completed )?(.+?)(?: (?:kill|harvest|lap|completion|success))? count is: ?[\\d,]+\\.?$", Pattern.CASE_INSENSITIVE);
@@ -61,6 +62,8 @@ public class PbCollector
 	private Shots shots;
 
 	private volatile int tick;
+	private volatile int engagedTick = -100000; // the last time you hit something or got hit: spectators never do
+	private static final int ENGAGED_TICKS = 500; // about 5 minutes
 
 	private String boss;
 	private int bossTick;
@@ -282,9 +285,21 @@ public class PbCollector
 		return n != null && (n.startsWith("Theatre of Blood: ") || n.startsWith("Fractured Archive: "));
 	}
 
+	@Subscribe
+	public void onHitsplatApplied(HitsplatApplied e)
+	{
+		if (e.getHitsplat().isMine() || e.getActor() == client.getLocalPlayer())
+		{
+			engagedTick = tick;
+		}
+	}
+
 	private void send(String name)
 	{
-		if (session.settled())
+		// raid and group times only count if you were fighting in them: someone spectating a run sees the same messages but did not take part
+		boolean group = name != null && (GROUP.matcher(name).find() || isRoom(name));
+		boolean tookPart = !group || tick - engagedTick <= ENGAGED_TICKS;
+		if (session.settled() && tookPart)
 		{
 			JsonObject d = new JsonObject();
 			d.addProperty("boss", name);
@@ -302,22 +317,20 @@ public class PbCollector
 			}
 			d.addProperty("raw", raw == null ? "" : raw);
 			d.addProperty("is_pb", newPb);
-			if (newPb)
 			{
-				waiting = d;
-				shotTries = 0;
-				capture();
-			}
-			else if (isRoom(name))
-			{
-				// a room time that isn't a personal best only needs a screenshot if it would take 1st or 2nd on the clan record: ask the site first
+				// every time, personal best or not, only needs a screenshot if it would take 1st or 2nd on the clan record (or beat a bingo speed tile): ask the site first.
+				// Only if the site can't be reached is the screenshot taken anyway, so a record that does reach staff has one.
 				final JsonObject check = new JsonObject();
 				check.addProperty("boss", name);
 				check.addProperty("time", d.get("time").getAsString());
 				check.addProperty("team_size", team);
 				dashboard.call("pl_pb_check", check, reply ->
 				{
-					if (reply != null && reply.has("top") && reply.get("top").getAsBoolean())
+					if (reply != null && reply.has("top") && !reply.get("top").getAsBoolean())
+					{
+						dashboard.send(Kind.PERSONAL_BEST, d); // can't reach the top two: nothing to review
+					}
+					else
 					{
 						synchronized (PbCollector.this)
 						{
@@ -326,15 +339,7 @@ public class PbCollector
 							waiting = d;
 						}
 					}
-					else
-					{
-						dashboard.send(Kind.PERSONAL_BEST, d);
-					}
 				});
-			}
-			else
-			{
-				dashboard.send(Kind.PERSONAL_BEST, d); // an ordinary time: no screenshot needed
 			}
 		}
 		time = null;

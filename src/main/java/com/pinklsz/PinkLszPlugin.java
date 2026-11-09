@@ -17,6 +17,7 @@ import javax.inject.Inject;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.events.GameStateChanged;
+import net.runelite.api.events.GameTick;
 import net.runelite.api.Player;
 import net.runelite.api.events.PlayerChanged;
 import net.runelite.client.callback.ClientThread;
@@ -85,6 +86,9 @@ public class PinkLszPlugin extends Plugin
 	private GearCollector gear;
 
 	@Inject
+	private com.pinklsz.collect.PkCollector pk;
+
+	@Inject
 	private PinkLszConfig config;
 
 	@Inject
@@ -99,6 +103,10 @@ public class PinkLszPlugin extends Plugin
 	private NavigationButton navButton;
 	private ScheduledFuture<?> lobbyPoll;
 	private ScheduledFuture<?> announcePoll;
+	private ScheduledFuture<?> eventsPoll;
+	private volatile int presenceRegion;
+	private volatile java.util.List<String> presenceNear = new java.util.ArrayList<>();
+	private int presenceTick;
 
 	private boolean loading;
 
@@ -124,6 +132,7 @@ public class PinkLszPlugin extends Plugin
 		eventBus.register(shots);
 		eventBus.register(deaths);
 		eventBus.register(gear);
+		eventBus.register(pk);
 		// the TeamFinder side panel, with the clan's icon on the toolbar
 		lobbyPanel.build();
 		navButton = NavigationButton.builder()
@@ -154,10 +163,35 @@ public class PinkLszPlugin extends Plugin
 		}, 5, 5, TimeUnit.SECONDS);
 		// messages the clan leaders send from the dashboard: asked for once a minute while logged in
 		announcePoll = executor.scheduleWithFixedDelay(this::checkAnnouncements, 10, 8, TimeUnit.SECONDS);
+		// events: the list refreshes every minute; while an event that tracks attendance is on, each refresh is also a check-in
+		eventsPoll = executor.scheduleWithFixedDelay(() ->
+		{
+			try
+			{
+				if (client.getGameState() == GameState.LOGGED_IN && session.settled())
+				{
+					lobbyPanel.pollEvents(presenceRegion, presenceNear, lobbyPanel.eventsChecking() || presenceFirst());
+				}
+			}
+			catch (RuntimeException e)
+			{
+				// an exception would stop a repeating task for good
+			}
+		}, 30, 30, TimeUnit.SECONDS); // every 30 seconds so short events add up properly
 		if (client.getGameState() == GameState.LOGGED_IN)
 		{
 			tryLoadPlayer();
 		}
+	}
+
+	private boolean firstPing = true;
+
+	/** The very first refresh after login also checks in, so an event that is already on is noticed straight away. */
+	private boolean presenceFirst()
+	{
+		boolean f = firstPing;
+		firstPing = false;
+		return f;
 	}
 
 	private void checkAnnouncements()
@@ -215,6 +249,7 @@ public class PinkLszPlugin extends Plugin
 		eventBus.unregister(shots);
 		eventBus.unregister(deaths);
 		eventBus.unregister(gear);
+		eventBus.unregister(pk);
 		if (lobbyPoll != null)
 		{
 			lobbyPoll.cancel(false);
@@ -224,6 +259,11 @@ public class PinkLszPlugin extends Plugin
 		{
 			announcePoll.cancel(false);
 			announcePoll = null;
+		}
+		if (eventsPoll != null)
+		{
+			eventsPoll.cancel(false);
+			eventsPoll = null;
 		}
 		if (navButton != null)
 		{
@@ -265,13 +305,62 @@ public class PinkLszPlugin extends Plugin
 		else if (s == GameState.LOGIN_SCREEN || s == GameState.HOPPING)
 		{
 			session.loggedOut();
+			firstPing = true;
+			if (s == GameState.LOGIN_SCREEN)
+			{
+				lobbyPanel.openCreateForm();
+			}
 			kills.forget();
 			log.forget();
 			achievements.forget();
 			pbs.forget();
 			deaths.forget();
+			pk.forget();
 			gear.forget();
 			loading = false;
+		}
+	}
+
+	/** Inside a raid = a Chambers varbit, the Theatre varbit, or any instanced area that is not a player-owned house */
+	@Subscribe
+	public void onGameTick(GameTick e)
+	{
+		boolean in = false;
+		if (client.getGameState() == GameState.LOGGED_IN)
+		{
+			in = client.getVarbitValue(5432) > 0 || client.getVarbitValue(6440) == 2;
+			if (!in && client.isInInstancedRegion() && client.getLocalPlayer() != null)
+			{
+				net.runelite.api.coords.WorldPoint wp = net.runelite.api.coords.WorldPoint.fromLocalInstance(client, client.getLocalPlayer().getLocalLocation());
+				int r = wp == null ? 0 : wp.getRegionID();
+				in = r != 7513 && r != 7514 && r != 7769 && r != 7770 && r != 8025 && r != 8026; // houses
+			}
+		}
+		lobbyPanel.setInRaid(in);
+		boolean wildNow = client.getGameState() == GameState.LOGGED_IN && client.getVarbitValue(5963) == 1; // in the Wilderness
+		lobbyPanel.setInWild(wildNow);
+		pk.setWild(wildNow);
+		pk.setActive(lobbyPanel.eventsChecking());
+		// where the player is and who is standing near them, for event check-ins (refreshed every few seconds, sent once a minute)
+		if (client.getGameState() == GameState.LOGGED_IN && client.getLocalPlayer() != null && ++presenceTick % 8 == 0)
+		{
+			Player me = client.getLocalPlayer();
+			net.runelite.api.coords.WorldPoint wp = net.runelite.api.coords.WorldPoint.fromLocalInstance(client, me.getLocalLocation());
+			presenceRegion = wp == null ? 0 : wp.getRegionID();
+			java.util.List<String> near = new java.util.ArrayList<>();
+			for (Player p : client.getPlayers())
+			{
+				if (p == null || p == me || p.getName() == null || near.size() >= 40)
+				{
+					continue;
+				}
+				// inside a raid everyone in the instance is the team, however far away they stand; outside, only the people close by
+				if (in || (p.getWorldLocation() != null && me.getWorldLocation() != null && p.getWorldLocation().distanceTo(me.getWorldLocation()) <= 20))
+				{
+					near.add(p.getName());
+				}
+			}
+			presenceNear = near;
 		}
 	}
 
@@ -315,6 +404,12 @@ public class PinkLszPlugin extends Plugin
 			gear.markDirty();
 			// load the team list a few seconds later, once the hello above has linked this account
 			executor.schedule(() -> lobbyPanel.refresh(), 6, TimeUnit.SECONDS);
+			// and the Events tab, with a first check-in, so it doesn't sit on "Log in" until the next minute-poll
+			// (tried at 2, 4 and 7 seconds: the first one that finds the account linked fills the list, the rest just refresh it)
+			for (int sec : new int[]{2, 4, 7})
+			{
+				executor.schedule(() -> lobbyPanel.pollEvents(presenceRegion, presenceNear, sec == 2), sec, TimeUnit.SECONDS);
+			}
 			return true;
 		});
 	}
