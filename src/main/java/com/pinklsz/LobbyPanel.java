@@ -2320,25 +2320,8 @@ public class LobbyPanel extends PluginPanel
 			{
 				return "";
 			}
-			// the region getter changed name between RuneLite versions (an enum, or a number: 0 US, 1 UK, 3 AU, 7 DE), so it is read by reflection
-			Object loc = null;
-			for (String getter : new String[] {"getRegion", "getLocation"})
-			{
-				try
-				{
-					loc = w.getClass().getMethod(getter).invoke(w);
-					break;
-				}
-				catch (ReflectiveOperationException ex)
-				{
-					// try the next name
-				}
-			}
-			String t = loc == null ? "" : loc.toString().toUpperCase();
-			if (loc instanceof Enum)
-			{
-				t = ((Enum<?>) loc).name().toUpperCase();
-			}
+			// the world list region (an enum such as UNITED_KINGDOM)
+			String t = String.valueOf(w.getRegion()).toUpperCase();
 			if (t.equals("0") || t.contains("UNITED_STATES") || t.equals("US") || t.contains("USA"))
 			{
 				return " (US)";
