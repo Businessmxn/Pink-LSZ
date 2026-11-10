@@ -2,8 +2,9 @@
 
 All notable changes to the Pink LSZ plugin since it was published to the RuneLite Plugin Hub (1.0.0).
 
-## 2.0.0
+## 2.0.1
 
+- New "Connect to the clan site" setting, off by default, with RuneLite's third-party warning. Nothing is sent to pinkosrs.com until it is turned on. While it is off the panel says so and one chat line appears each login.
 ### Added
 - **Clan bingo.**
   - **View Board** button on bingo events (under "Ends in") opens a pop-out window with your team's board and progress. It refreshes every minute, shows each tile's picture, points and "got / need", and has a **View on website** link.

@@ -2005,6 +2005,7 @@ public class LobbyPanel extends PluginPanel
 		inLobby = mineTeam != null;
 		if (mineTeam == null)
 		{
+			leavePartyHub();
 			if (hostedId != -1 && "list".equals(op))
 			{
 				String how = goneHow;
@@ -2091,12 +2092,37 @@ public class LobbyPanel extends PluginPanel
 		return "Team full (" + count + "/" + size + "): Time to go!" + world;
 	}
 
+	private String joinedHub = ""; // the party passphrase this plugin put the player into for their team
+
+	/** When you leave (or the host closes) the team, take you out of the party the plugin put you in. A party you joined yourself is left alone. */
+	private void leavePartyHub()
+	{
+		if (joinedHub.isEmpty())
+		{
+			return;
+		}
+		String hub = joinedHub;
+		joinedHub = "";
+		try
+		{
+			if (hub.equals(partyService.getPartyPassphrase()))
+			{
+				partyService.changeParty(null);
+			}
+		}
+		catch (RuntimeException e)
+		{
+			dashboard.note("Could not leave the party hub \"" + hub + "\". Leave it from the Party Panel.");
+		}
+	}
+
 	/** Pressing Join also puts you in the host's RuneLite party (the one Party Panel shows), if the host listed a party hub. */
 	private void joinPartyHub(JsonObject team, boolean created)
 	{
 		String hubName = team.has("hub") && !team.get("hub").isJsonNull() ? team.get("hub").getAsString().trim() : "";
 		if (hubName.isEmpty())
 		{
+			leavePartyHub(); // the new team has no party hub: don't stay in the last team's
 			return;
 		}
 		try
@@ -2105,6 +2131,7 @@ public class LobbyPanel extends PluginPanel
 			{
 				partyService.changeParty(hubName);
 			}
+			joinedHub = hubName;
 		}
 		catch (RuntimeException e)
 		{

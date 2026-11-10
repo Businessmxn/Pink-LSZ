@@ -10,6 +10,18 @@ public interface PinkLszConfig extends Config
 	String GROUP = "pinklsz";
 
 	@ConfigItem(
+		keyName = "connect",
+		name = "Connect to the clan site",
+		description = "Needed for personal bests, drops, TeamFinder, events and bingo. Nothing is sent to pinkosrs.com until this is on.",
+		warning = "Enabling this option submits your IP address and various other account data to a 3rd-party server not controlled or verified by RuneLite developers.",
+		position = 0
+	)
+	default boolean connect()
+	{
+		return false;
+	}
+
+	@ConfigItem(
 		keyName = "dashboardUrl",
 		name = "Dashboard address",
 		description = "Where the Pink LSZ dashboard lives. You shouldn't need to change this.",

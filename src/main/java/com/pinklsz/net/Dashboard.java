@@ -108,9 +108,19 @@ public class Dashboard
 		return watched.contains(itemId);
 	}
 
+	/** Nothing goes to the clan site until the player has turned this on (it has a third-party warning in the settings). */
+	public boolean enabled()
+	{
+		return config.connect();
+	}
+
 	/** Can be called from any thread. */
 	public void send(Kind kind, JsonObject data)
 	{
+		if (!enabled())
+		{
+			return;
+		}
 		if (client.isClientThread())
 		{
 			enqueue(kind, data);
@@ -229,6 +239,11 @@ public class Dashboard
 
 	private void upload(Upload u)
 	{
+		if (!enabled())
+		{
+			finished(); // switched off while waiting: the upload is dropped
+			return;
+		}
 		HttpUrl url = endpoint();
 		if (url == null)
 		{
@@ -415,6 +430,11 @@ public class Dashboard
 
 	public void call(String action, JsonObject data, java.util.function.Consumer<JsonObject> done)
 	{
+		if (!enabled())
+		{
+			done.accept(error("Turn on \"Connect to the clan site\" in the Pink LSZ plugin settings to use this."));
+			return;
+		}
 		clientThread.invoke(() ->
 		{
 			Player me = client.getLocalPlayer();
@@ -485,6 +505,10 @@ public class Dashboard
 	/** The clan rank icon (the same picture the dashboard shows), or null while it is still being fetched; whenLoaded runs once it arrives. */
 	public java.awt.image.BufferedImage roleIcon(String role, Runnable whenLoaded)
 	{
+		if (!enabled())
+		{
+			return null;
+		}
 		if (role == null || !role.matches("[a-z0-9_\\-]{1,40}"))
 		{
 			return null;

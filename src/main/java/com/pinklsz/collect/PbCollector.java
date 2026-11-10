@@ -71,6 +71,8 @@ public class PbCollector
 	private int lastTeamTick = -1000;
 	private String waveBoss; // the Theatre of Blood room named in the last "Wave ... complete" line
 	private int waveTick = -1000;
+	private int entryTick = -100000; // the last time the game said this Theatre of Blood run is Entry Mode (those times are not clan records)
+	private static final int ENTRY_TICKS = 3000; // a whole raid, about 30 minutes
 	private String lineBoss; // a name taken from the time's own line
 
 	private String time;
@@ -94,9 +96,22 @@ public class PbCollector
 			lastTeam = ts.group(1) == null ? 1 : Integer.parseInt(ts.group(1));
 			lastTeamTick = tick;
 		}
+		if (msg.toLowerCase().contains("entry mode"))
+		{
+			entryTick = tick;
+		}
 		Matcher wv = WAVE.matcher(msg);
 		if (wv.find())
 		{
+			if (wv.group(2) != null && wv.group(2).toLowerCase().contains("entry"))
+			{
+				entryTick = tick;
+			}
+			else if (wv.group(1).toLowerCase().contains("sugadinti") || wv.group(1).toLowerCase().contains("bloat") || wv.group(1).toLowerCase().contains("nylocas")
+				|| wv.group(1).toLowerCase().contains("sotetseg") || wv.group(1).toLowerCase().contains("xarpus") || wv.group(1).toLowerCase().contains("verzik"))
+			{
+				entryTick = -100000; // a Normal or Hard Mode wave: a new run
+			}
 			String w = wv.group(1).toLowerCase();
 			for (String[] r : TOB_ROOMS)
 			{
@@ -268,8 +283,19 @@ public class PbCollector
 		}
 	}
 
+	private boolean entryMode(String name)
+	{
+		boolean tob = (name != null && name.toLowerCase().contains("theatre of blood")) || (raw != null && raw.toLowerCase().contains("theatre of blood"));
+		return tob && (tick - entryTick <= ENTRY_TICKS || (raw != null && raw.toLowerCase().contains("entry mode")));
+	}
+
 	private void trySend()
 	{
+		if (time != null && (entryMode(lineBoss) || entryMode(boss)))
+		{
+			time = null; // Entry Mode is not Normal Mode: never reported
+			return;
+		}
 		if (time != null && isRoom(lineBoss))
 		{
 			send(lineBoss); // a room's own time is never filed under the whole raid
@@ -296,6 +322,11 @@ public class PbCollector
 
 	private void send(String name)
 	{
+		if (entryMode(name) || entryMode(lineBoss) || entryMode(boss))
+		{
+			time = null; // Entry Mode is not Normal Mode: never reported
+			return;
+		}
 		// raid and group times only count if you were fighting in them: someone spectating a run sees the same messages but did not take part
 		boolean group = name != null && (GROUP.matcher(name).find() || isRoom(name));
 		boolean tookPart = !group || tick - engagedTick <= ENGAGED_TICKS;

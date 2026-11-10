@@ -41,7 +41,7 @@ import java.util.concurrent.TimeUnit;
 )
 public class PinkLszPlugin extends Plugin
 {
-	public static final String VERSION = "1.1.1";
+	public static final String VERSION = "2.0.1";
 
 	@Inject
 	private Client client;
@@ -57,6 +57,8 @@ public class PinkLszPlugin extends Plugin
 
 	@Inject
 	private Dashboard dashboard;
+
+	private boolean offNoticed; // the "not connected" chat line is shown once per login
 
 	@Inject
 	private Session session;
@@ -283,6 +285,16 @@ public class PinkLszPlugin extends Plugin
 	@Subscribe
 	public void onConfigChanged(net.runelite.client.events.ConfigChanged e)
 	{
+		if (PinkLszConfig.GROUP.equals(e.getGroup()) && "connect".equals(e.getKey()))
+		{
+			offNoticed = false;
+			if (config.connect() && client.getGameState() == GameState.LOGGED_IN)
+			{
+				tryLoadPlayer(); // just switched on: introduce this account to the site now
+			}
+			lobbyPanel.refresh();
+			return;
+		}
 		if (navButton == null || !PinkLszConfig.GROUP.equals(e.getGroup()) || !"hideSidePanel".equals(e.getKey()))
 		{
 			return;
@@ -305,6 +317,7 @@ public class PinkLszPlugin extends Plugin
 		else if (s == GameState.LOGIN_SCREEN || s == GameState.HOPPING)
 		{
 			session.loggedOut();
+			offNoticed = false;
 			firstPing = true;
 			if (s == GameState.LOGIN_SCREEN)
 			{
@@ -395,6 +408,16 @@ public class PinkLszPlugin extends Plugin
 				return false;
 			}
 			loading = false;
+			if (!config.connect())
+			{
+				if (offNoticed)
+				{
+					return true;
+				}
+				offNoticed = true;
+				dashboard.note("Pink LSZ is not connected. Turn on \"Connect to the clan site\" in the Pink LSZ plugin settings to use the clan features.");
+				return true;
+			}
 			session.loaded();
 			log.primeLastItem();
 			dashboard.send(Kind.HELLO, new JsonObject());
