@@ -4,6 +4,10 @@ All notable changes to the Pink LSZ plugin since it was published to the RuneLit
 
 ## 2.0.1
 
+- Leaving a team, or the host closing it, now also leaves the RuneLite party the plugin put you in.
+- Deaths to bosses named "The ..." (The Leviathan, The Whisperer, The Hueycoatl, The Gauntlet, The Royal Titans) are now recorded.
+- The plugin scrollbar is pink.
+
 - New "Connect to the clan site" setting, off by default, with RuneLite's third-party warning. Nothing is sent to pinkosrs.com until it is turned on. While it is off the panel says so and one chat line appears each login.
 ### Added
 - **Clan bingo.**

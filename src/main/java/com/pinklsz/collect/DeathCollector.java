@@ -84,7 +84,7 @@ public class DeathCollector
 		}
 		for (Map.Entry<Integer, String> e : BossVarps.all())
 		{
-			bosses.put(norm(e.getValue()), e.getValue());
+			bosses.put(norm(e.getValue().replace('_', ' ')), e.getValue()); // "the_leviathan" must match the NPC "The Leviathan" (norm drops a leading "the ")
 		}
 		for (String[] raid : RAID_NPCS)
 		{

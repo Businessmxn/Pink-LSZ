@@ -81,6 +81,7 @@ public class LobbyPanel extends PluginPanel
 				javax.swing.JScrollBar bar = ((javax.swing.JScrollPane) sp).getVerticalScrollBar();
 				bar.setUnitIncrement(24);
 				bar.setBlockIncrement(160);
+				pinkBar(bar);
 				// the same dark colour behind the whole panel (it showed grey under the content), and no outline from the scroll pane
 				javax.swing.JScrollPane pane = (javax.swing.JScrollPane) sp;
 				pane.setBorder(BorderFactory.createEmptyBorder());
@@ -91,6 +92,66 @@ public class LobbyPanel extends PluginPanel
 				pane.getViewport().setFocusable(false);
 			}
 		});
+	}
+
+	/** A slim scrollbar with a pink thumb on the panel's dark background (no arrow buttons). */
+	static void pinkBar(javax.swing.JScrollBar bar)
+	{
+		bar.setUI(new javax.swing.plaf.basic.BasicScrollBarUI()
+		{
+			@Override
+			protected void configureScrollBarColors()
+			{
+				thumbColor = PINK;
+				trackColor = BG;
+			}
+
+			@Override
+			protected javax.swing.JButton createDecreaseButton(int orientation)
+			{
+				return zeroButton();
+			}
+
+			@Override
+			protected javax.swing.JButton createIncreaseButton(int orientation)
+			{
+				return zeroButton();
+			}
+
+			private javax.swing.JButton zeroButton()
+			{
+				javax.swing.JButton b = new javax.swing.JButton();
+				java.awt.Dimension none = new java.awt.Dimension(0, 0);
+				b.setPreferredSize(none);
+				b.setMinimumSize(none);
+				b.setMaximumSize(none);
+				return b;
+			}
+
+			@Override
+			protected void paintTrack(Graphics g, javax.swing.JComponent c, java.awt.Rectangle r)
+			{
+				g.setColor(BG);
+				g.fillRect(r.x, r.y, r.width, r.height);
+			}
+
+			@Override
+			protected void paintThumb(Graphics g, javax.swing.JComponent c, java.awt.Rectangle r)
+			{
+				if (r.isEmpty() || !scrollbar.isEnabled())
+				{
+					return;
+				}
+				Graphics2D g2 = (Graphics2D) g.create();
+				g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+				g2.setColor(isThumbRollover() || isDragging ? PINK_DARK.brighter() : PINK);
+				g2.fillRoundRect(r.x + 2, r.y + 1, Math.max(4, r.width - 4), r.height - 2, 8, 8);
+				g2.dispose();
+			}
+		});
+		bar.setPreferredSize(new java.awt.Dimension(10, 0));
+		bar.setOpaque(true);
+		bar.setBackground(BG);
 	}
 
 	private static final class Act
@@ -1623,7 +1684,9 @@ public class LobbyPanel extends PluginPanel
 		{
 			JPanel one = gearPanel(setups.get(0).getAsJsonObject());
 			tall = one.getPreferredSize().height;
-			dlg.setContentPane(new JScrollPane(one, javax.swing.ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED, javax.swing.ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER));
+			JScrollPane onePane = new JScrollPane(one, javax.swing.ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED, javax.swing.ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+			pinkBar(onePane.getVerticalScrollBar());
+			dlg.setContentPane(onePane);
 		}
 		else
 		{
@@ -1635,7 +1698,9 @@ public class LobbyPanel extends PluginPanel
 				JPanel gp = gearPanel(g);
 				tall = Math.max(tall, gp.getPreferredSize().height);
 				String nm = g.get("name").getAsString();
-				tabs.addTab(nm.length() > 14 ? nm.substring(0, 13) + "…" : nm, new JScrollPane(gp, javax.swing.ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED, javax.swing.ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER));
+				JScrollPane tabPane = new JScrollPane(gp, javax.swing.ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED, javax.swing.ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+				pinkBar(tabPane.getVerticalScrollBar());
+				tabs.addTab(nm.length() > 14 ? nm.substring(0, 13) + "…" : nm, tabPane);
 				tabs.setToolTipTextAt(tabs.getTabCount() - 1, nm);
 			}
 			dlg.setContentPane(tabs);
