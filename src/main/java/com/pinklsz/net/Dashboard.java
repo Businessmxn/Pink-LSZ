@@ -388,11 +388,8 @@ public class Dashboard
 				if (!connected)
 				{
 					connected = true;
-					boolean linked = !reply.has("linked") || reply.get("linked").getAsBoolean();
-					if (!linked)
-					{
-						note("Add this character's name to your dashboard profile so your data shows up there.");
-					}
+					// a member without a dashboard profile is fine: clan features don't need one, and their data
+					// attaches by itself when they first log in to the dashboard
 				}
 				if (reply.has("need_clog") && reply.get("need_clog").getAsBoolean())
 				{
