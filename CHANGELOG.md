@@ -2,6 +2,13 @@
 
 All notable changes to the Pink LSZ plugin since it was published to the RuneLite Plugin Hub (1.0.0).
 
+## 2.0.3
+
+- Fractured Archive times set in practice mode are no longer sent to the clan site.
+- Verzik's room time ("Wave 'The Final Challenge' complete!") is now recorded as the Verzik room, not as the whole Theatre of Blood raid time.
+- Team finder accepts worlds 301 to 700 (was 301 to 600).
+- Removed the "Add this character's name to your dashboard profile" chat message. Data for members who haven't logged in to the website yet is attached to their profile automatically when they first log in.
+
 ## 2.0.1
 
 - Leaving a team, or the host closing it, now also leaves the RuneLite party the plugin put you in.

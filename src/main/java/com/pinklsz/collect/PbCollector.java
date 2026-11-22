@@ -42,7 +42,7 @@ public class PbCollector
 	private static final Pattern LINE_ROOM = Pattern.compile("^Challenge complete: (.+?)\\.", Pattern.CASE_INSENSITIVE);
 	// "Wave 'The Maiden of Sugadinti' (Hard Mode) complete! Duration: 2:08.40": a Theatre of Blood room (the duration can come in the same message or the next)
 	private static final Pattern WAVE = Pattern.compile("Wave '(.+?)'(?:\\s*\\((.*?)\\))?\\s*complete", Pattern.CASE_INSENSITIVE);
-	private static final String[][] TOB_ROOMS = {{"maiden", "Maiden"}, {"bloat", "Bloat"}, {"nylocas", "Nylocas"}, {"sotetseg", "Sotetseg"}, {"xarpus", "Xarpus"}, {"verzik", "Verzik"}};
+	private static final String[][] TOB_ROOMS = {{"maiden", "Maiden"}, {"bloat", "Bloat"}, {"nylocas", "Nylocas"}, {"sotetseg", "Sotetseg"}, {"xarpus", "Xarpus"}, {"verzik", "Verzik"}, {"final challenge", "Verzik"}};
 	private static final String[] TFA_ROOMS = {"archive guardian", "ezekiel", "bork", "moia", "dreadnoth", "dagon", "xarth", "ocellus"};
 	private static final Pattern LINE_TOTAL = Pattern.compile("^(.+?):? (?:total )?(?:completion time|duration)", Pattern.CASE_INSENSITIVE);
 	// group content where the game doesn't print the team size next to the time: the players in the instance are the team
@@ -73,6 +73,9 @@ public class PbCollector
 	private int waveTick = -1000;
 	private int entryTick = -100000; // the last time the game said this Theatre of Blood run is Entry Mode (those times are not clan records)
 	private static final int ENTRY_TICKS = 3000; // a whole raid, about 30 minutes
+	private static final int TFA_PRACTICE_VARBIT = 16382; // 1 while the Fractured Archive party is set to practice mode (times in practice mode are not clan records)
+	private static final int PRACTICE_TICKS = 20;
+	private int practiceTick = -100000; // the last time practice mode was seen on
 	private String lineBoss; // a name taken from the time's own line
 
 	private String time;
@@ -108,7 +111,7 @@ public class PbCollector
 				entryTick = tick;
 			}
 			else if (wv.group(1).toLowerCase().contains("sugadinti") || wv.group(1).toLowerCase().contains("bloat") || wv.group(1).toLowerCase().contains("nylocas")
-				|| wv.group(1).toLowerCase().contains("sotetseg") || wv.group(1).toLowerCase().contains("xarpus") || wv.group(1).toLowerCase().contains("verzik"))
+				|| wv.group(1).toLowerCase().contains("sotetseg") || wv.group(1).toLowerCase().contains("xarpus") || wv.group(1).toLowerCase().contains("verzik") || wv.group(1).toLowerCase().contains("final challenge"))
 			{
 				entryTick = -100000; // a Normal or Hard Mode wave: a new run
 			}
@@ -232,6 +235,10 @@ public class PbCollector
 	public void onGameTick(GameTick e)
 	{
 		tick = tick + 1;
+		if (client.getVarbitValue(TFA_PRACTICE_VARBIT) == 1)
+		{
+			practiceTick = tick;
+		}
 		if (waiting != null && tick >= waitingUntil)
 		{
 			capture();
@@ -289,8 +296,19 @@ public class PbCollector
 		return tob && (tick - entryTick <= ENTRY_TICKS || (raw != null && raw.toLowerCase().contains("entry mode")));
 	}
 
+	private boolean practiceMode(String name)
+	{
+		boolean tfa = (name != null && name.toLowerCase().contains("fractured archive")) || (raw != null && raw.toLowerCase().contains("fractured archive"));
+		return tfa && (tick - practiceTick <= PRACTICE_TICKS || client.getVarbitValue(TFA_PRACTICE_VARBIT) == 1);
+	}
+
 	private void trySend()
 	{
+		if (time != null && (practiceMode(lineBoss) || practiceMode(boss)))
+		{
+			time = null; // Practice mode is not a real run: never reported
+			return;
+		}
 		if (time != null && (entryMode(lineBoss) || entryMode(boss)))
 		{
 			time = null; // Entry Mode is not Normal Mode: never reported
@@ -322,6 +340,11 @@ public class PbCollector
 
 	private void send(String name)
 	{
+		if (practiceMode(name) || practiceMode(lineBoss) || practiceMode(boss))
+		{
+			time = null; // Practice mode is not a real run: never reported
+			return;
+		}
 		if (entryMode(name) || entryMode(lineBoss) || entryMode(boss))
 		{
 			time = null; // Entry Mode is not Normal Mode: never reported

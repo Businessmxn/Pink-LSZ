@@ -1948,9 +1948,9 @@ public class LobbyPanel extends PluginPanel
 		{
 			return null;
 		}
-		if (w < 301 || w > 600)
+		if (w < 301 || w > 700)
 		{
-			return "Type a members world between 301 and 600.";
+			return "Type a members world between 301 and 700.";
 		}
 		try
 		{
