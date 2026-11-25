@@ -41,6 +41,7 @@ public class PbCollector
 	// the name in the time's own line, for the times that have no kill-count line after them: "Challenge complete: Bork. Duration: 2:12" / "The Fractured Archive: Total completion time: 21:40" / "Theatre of Blood total completion time: 27:39"
 	private static final Pattern LINE_ROOM = Pattern.compile("^Challenge complete: (.+?)\\.", Pattern.CASE_INSENSITIVE);
 	// "Wave 'The Maiden of Sugadinti' (Hard Mode) complete! Duration: 2:08.40": a Theatre of Blood room (the duration can come in the same message or the next)
+	private static final Pattern COLOSSEUM_WAVE = Pattern.compile("^Wave:? \\d+ completed!", Pattern.CASE_INSENSITIVE);
 	private static final Pattern WAVE = Pattern.compile("Wave '(.+?)'(?:\\s*\\((.*?)\\))?\\s*complete", Pattern.CASE_INSENSITIVE);
 	private static final String[][] TOB_ROOMS = {{"maiden", "Maiden"}, {"bloat", "Bloat"}, {"nylocas", "Nylocas"}, {"sotetseg", "Sotetseg"}, {"xarpus", "Xarpus"}, {"verzik", "Verzik"}, {"final challenge", "Verzik"}};
 	private static final String[] TFA_ROOMS = {"archive guardian", "ezekiel", "bork", "moia", "dreadnoth", "dagon", "xarth", "ocellus"};
@@ -137,6 +138,10 @@ public class PbCollector
 			bossTick = tick;
 			trySend();
 			return;
+		}
+		if (COLOSSEUM_WAVE.matcher(msg).find())
+		{
+			return; // a Colosseum wave's own time ("Wave 12 completed! Wave duration: ..."): the run's time is the "Colosseum duration" line after it
 		}
 		Matcher p = NEW_PB.matcher(msg);
 		boolean pb = p.find();

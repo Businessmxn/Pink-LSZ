@@ -563,6 +563,15 @@ public class LobbyPanel extends PluginPanel
 		return b;
 	}
 
+	/** The smaller pill used on the host's team card (Change, Close team, Invite only), the height of a text box. */
+	private static JButton compact(JButton b)
+	{
+		b.setFont(F(Font.BOLD, 12f));
+		b.setMargin(new Insets(2, 10, 2, 10));
+		b.setPreferredSize(new Dimension(b.getPreferredSize().width, FIELD_H - 4));
+		return b;
+	}
+
 	private static <T> void styleCombo(JComboBox<T> c)
 	{
 		c.setFont(F(Font.PLAIN, 13f));
@@ -1295,7 +1304,7 @@ public class LobbyPanel extends PluginPanel
 			{
 				boolean onTeam = bingo.has("team") && !bingo.get("team").isJsonNull();
 				String hex = bingo.has("color") && !bingo.get("color").isJsonNull() ? bingo.get("color").getAsString() : "#ef3d9a";
-				JLabel tm = new JLabel("<html><body style='width:150px'>" + (onTeam ? "Your team: <font color='" + esc(hex) + "'><b>" + esc(bingo.get("team").getAsString()) + "</b></font>" : "You aren't on a team in this event.") + "</body></html>");
+				JLabel tm = new JLabel("<html><body style='width:150px'>" + (onTeam ? "Your team: <font color='" + safeHex(hex) + "'><b>" + esc(bingo.get("team").getAsString()) + "</b></font>" : "You aren't on a team in this event.") + "</body></html>");
 				tm.setForeground(MUTED);
 				tm.setFont(F(Font.PLAIN, 12f));
 				tm.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -1887,6 +1896,12 @@ public class LobbyPanel extends PluginPanel
 		return checks.has(key) && !checks.get(key).isJsonNull() && !checks.get(key).getAsBoolean() ? text : null;
 	}
 
+	/** A colour from the clan site, only if it is a plain hex colour (#rgb or #rrggbb); anything else becomes the clan pink. Never escaped text inside HTML. */
+	private static String safeHex(String s)
+	{
+		return s != null && s.matches("#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3}") ? s : "#ef3d9a";
+	}
+
 	private static String esc(String s)
 	{
 		return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
@@ -1967,7 +1982,7 @@ public class LobbyPanel extends PluginPanel
 				{
 					members = true;
 				}
-				else
+				else if (!"SKILL_TOTAL".equals(t.toString())) // total level worlds (like 373, the clan's world) are fine
 				{
 					return "World " + w + " is a special world. Pick a normal members world.";
 				}
@@ -2553,23 +2568,53 @@ public class LobbyPanel extends PluginPanel
 			}
 		}
 		playersBox.removeAll();
-		JsonArray av = reply.has("avail") && reply.get("avail").isJsonArray() ? reply.getAsJsonArray("avail") : new JsonArray();
+		JsonArray avAll = reply.has("avail") && reply.get("avail").isJsonArray() ? reply.getAsJsonArray("avail") : new JsonArray();
 		JsonObject ranks = reply.has("availRanks") && reply.get("availRanks").isJsonObject() ? reply.getAsJsonObject("availRanks") : new JsonObject();
-		if (av.size() > 0)
+		// learners get their own list, under everyone else, outlined in green so they are easy to pick out
+		JsonArray av = new JsonArray();
+		int learnersN = 0;
+		for (JsonElement e : avAll)
 		{
-			JLabel hd = new JLabel("Players available (" + av.size() + ")");
+			if (!(e.getAsJsonObject().has("learner") && e.getAsJsonObject().get("learner").getAsBoolean()))
+			{
+				av.add(e);
+			}
+		}
+		int othersN = av.size();
+		for (JsonElement e : avAll)
+		{
+			if (e.getAsJsonObject().has("learner") && e.getAsJsonObject().get("learner").getAsBoolean())
+			{
+				av.add(e);
+				learnersN++;
+			}
+		}
+		if (othersN > 0)
+		{
+			JLabel hd = new JLabel("Players available (" + othersN + ")");
 			hd.setForeground(TEXT);
 			hd.setFont(F(Font.BOLD, 14f));
 			hd.setAlignmentX(Component.LEFT_ALIGNMENT);
 			hd.setBorder(BorderFactory.createEmptyBorder(12, 2, 6, 0));
 			playersBox.add(hd);
 		}
+		int shownN = 0;
 		for (JsonElement e : av)
 		{
 			JsonObject v = e.getAsJsonObject();
 			String n = v.get("rsn").getAsString();
 			boolean me = v.get("mine").getAsBoolean();
-			Round row = new Round(CARD, EDGE, 12);
+			boolean isLearner = v.has("learner") && v.get("learner").getAsBoolean();
+			if (shownN++ == othersN && learnersN > 0)
+			{
+				JLabel lh = new JLabel("Learners available (" + learnersN + ")");
+				lh.setForeground(new Color(0x7BE0A0));
+				lh.setFont(F(Font.BOLD, 14f));
+				lh.setAlignmentX(Component.LEFT_ALIGNMENT);
+				lh.setBorder(BorderFactory.createEmptyBorder(12, 2, 6, 0));
+				playersBox.add(lh);
+			}
+			Round row = new Round(isLearner ? new Color(0x16261C) : CARD, isLearner ? new Color(0x7BE0A0) : EDGE, 12);
 			row.setLayout(new BorderLayout(6, 0));
 			row.setBorder(BorderFactory.createEmptyBorder(6, 8, 6, 8));
 			row.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -2614,6 +2659,10 @@ public class LobbyPanel extends PluginPanel
 			{
 				tags.add(chip(vm, new Color(0x9C8CFF)));
 			}
+			if (v.has("inRaid") && v.get("inRaid").getAsBoolean())
+			{
+				tags.add(chip("In raid", new Color(0xF0A030)));
+			}
 			if (v.has("learner") && v.get("learner").getAsBoolean())
 			{
 				tags.add(chip("Learner", new Color(0x7BE0A0)));
@@ -2657,8 +2706,14 @@ public class LobbyPanel extends PluginPanel
 		playersBox.repaint();
 	}
 
+	private volatile boolean sizePicking; // the host has the team size list open: don't rebuild the cards under it
+
 	private void render(JsonArray lobbies)
 	{
+		if (sizePicking)
+		{
+			return;
+		}
 		list.removeAll();
 		openCount.setText("Open teams (" + lobbies.size() + ")");
 		if (lobbies.size() == 0)
@@ -2732,6 +2787,11 @@ public class LobbyPanel extends PluginPanel
 		if (l.has("learner") && l.get("learner").getAsBoolean())
 		{
 			chips.add(chip("Learner-friendly", new Color(0x7BE0A0)));
+		}
+		boolean locked = l.has("locked") && l.get("locked").getAsBoolean();
+		if (locked)
+		{
+			chips.add(chip("Invite only", new Color(0xD9A0FF)));
 		}
 		if (l.has("ffa") && !l.get("ffa").isJsonNull())
 		{
@@ -2810,7 +2870,6 @@ public class LobbyPanel extends PluginPanel
 		}
 		c.add(gap(8));
 
-		JButton changeBtn = null;
 		if (mine)
 		{
 			// the host can move the team to another world without closing it
@@ -2821,6 +2880,7 @@ public class LobbyPanel extends PluginPanel
 			JLabel wl = new JLabel("World");
 			wl.setForeground(MUTED);
 			wl.setFont(F(Font.PLAIN, 13f));
+			wl.setPreferredSize(new Dimension(62, wl.getPreferredSize().height)); // lines up with "Team size" below
 			wr.add(wl);
 			// the list is rebuilt on every refresh, so what is being typed is kept per team and put back
 			String shown = l.has("world") && !l.get("world").isJsonNull() ? Integer.toString(l.get("world").getAsInt()) : "";
@@ -2871,7 +2931,9 @@ public class LobbyPanel extends PluginPanel
 			wf.setForeground(TEXT);
 			wf.setCaretColor(TEXT);
 			wr.add(wf);
-			JButton wb = pill("Change", PINK, true);
+			wf.setPreferredSize(new Dimension(56, FIELD_H - 4));
+			JButton wb = compact(pill("Change", PINK, true)); // a smaller pill, the same height as the world box beside it
+			wb.setToolTipText("Move the team to the world typed in the box");
 			wf.addActionListener(ev -> wb.doClick());
 			wb.addActionListener(ev ->
 			{
@@ -2896,9 +2958,75 @@ public class LobbyPanel extends PluginPanel
 					setStatus("Type a world number, like 373.", true);
 				}
 			});
-			changeBtn = wb;
+			wr.add(wb); // Change sits right beside the world it changes
 			c.add(wr);
 			c.add(gap(6));
+			// the host can make the team bigger or smaller without closing it (the activity's own limits, never below who is already in)
+			Act ta = actByName(l.get("activity").getAsString());
+			if (ta != null && (ta.max > ta.min || ta.mass))
+			{
+				JPanel sr = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+				sr.setOpaque(false);
+				sr.setAlignmentX(Component.LEFT_ALIGNMENT);
+				sr.setBorder(BorderFactory.createEmptyBorder(0, -6, 0, 0));
+				JLabel sl = new JLabel("Team size");
+				sl.setForeground(MUTED);
+				sl.setFont(F(Font.PLAIN, 13f));
+				sl.setPreferredSize(new Dimension(62, sl.getPreferredSize().height));
+				sr.add(sl);
+				JComboBox<Size> sb = new JComboBox<>();
+				for (int v = Math.max(ta.min, members.size()); v <= ta.max; v++)
+				{
+					sb.addItem(new Size(v));
+				}
+				if (ta.mass)
+				{
+					sb.addItem(new Size(0));
+				}
+				for (int i = 0; i < sb.getItemCount(); i++)
+				{
+					if (sb.getItemAt(i).value == cap)
+					{
+						sb.setSelectedIndex(i);
+					}
+				}
+				styleCombo(sb);
+				sb.addPopupMenuListener(new javax.swing.event.PopupMenuListener()
+				{
+					@Override
+					public void popupMenuWillBecomeVisible(javax.swing.event.PopupMenuEvent e)
+					{
+						sizePicking = true;
+					}
+
+					@Override
+					public void popupMenuWillBecomeInvisible(javax.swing.event.PopupMenuEvent e)
+					{
+						sizePicking = false;
+					}
+
+					@Override
+					public void popupMenuCanceled(javax.swing.event.PopupMenuEvent e)
+					{
+						sizePicking = false;
+					}
+				});
+				sb.addActionListener(ev ->
+				{
+					Size picked = (Size) sb.getSelectedItem();
+					if (picked == null || picked.value == cap)
+					{
+						return;
+					}
+					JsonObject sd = new JsonObject();
+					sd.addProperty("id", id);
+					sd.addProperty("size", picked.value);
+					send("size", sd);
+				});
+				sr.add(sb);
+				c.add(sr);
+				c.add(gap(6));
+			}
 		}
 		JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
 		actions.setOpaque(false);
@@ -2906,11 +3034,7 @@ public class LobbyPanel extends PluginPanel
 		actions.setBorder(BorderFactory.createEmptyBorder(0, -6, 0, 0));
 		if (mine)
 		{
-			if (changeBtn != null)
-			{
-				actions.add(changeBtn); // Change sits under the World box, beside Close team
-			}
-			JButton b = pill("Close team", DANGER, true);
+			JButton b = compact(pill("Close team", DANGER, true));
 			b.addActionListener(ev -> act("close", id));
 			actions.add(b);
 		}
@@ -2922,20 +3046,65 @@ public class LobbyPanel extends PluginPanel
 		}
 		else
 		{
-			JButton b = pill(full ? "Full" : "Join", PINK, false);
-			b.setEnabled(!full);
+			JButton b = pill(full ? "Full" : locked ? "Invite only" : "Join", PINK, false);
+			b.setEnabled(!full && !locked);
+			if (locked)
+			{
+				b.setToolTipText("This team is invite only: make yourself available and the host can invite you");
+			}
 			b.addActionListener(ev -> act("join", id));
 			actions.add(b);
+		}
+		JPanel extra = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+		extra.setOpaque(false);
+		extra.setAlignmentX(Component.LEFT_ALIGNMENT);
+		extra.setBorder(BorderFactory.createEmptyBorder(0, -6, 0, 0));
+		if (mod || mine)
+		{
+			// the host (or staff, on any team): make the team invite only (only players the host invites from the available list can join), or open it again
+			JButton lk = pill(locked ? "Open to all" : "Invite only", GOLD, true);
+			if (mine)
+			{
+				compact(lk); // smaller, so it fits on the host's row beside Close team
+			}
+			lk.setToolTipText(locked ? "Let anyone join this team again" : "Only players you invite from the available list can join");
+			lk.addActionListener(ev ->
+			{
+				JsonObject ld = new JsonObject();
+				ld.addProperty("id", id);
+				ld.addProperty("locked", !locked);
+				send("lock", ld);
+			});
+			(mine ? actions : extra).add(lk); // the host: beside Close team; staff on someone else's team: on its own row
 		}
 		if (mod && !mine)
 		{
 			JButton rm = pill("Remove", DANGER, true);
 			rm.setToolTipText("Moderator: take this team down");
 			rm.addActionListener(ev -> act("remove", id));
-			actions.add(rm);
+			extra.add(rm);
 		}
 		c.add(actions);
+		if (extra.getComponentCount() > 0)
+		{
+			c.add(gap(6));
+			c.add(extra); // its own row: the panel is too narrow for a third button beside Change and Close team
+		}
 		return c;
+	}
+
+	/** The activity (with its team size limits) from the list the site sent, or null. */
+	private Act actByName(String name)
+	{
+		for (int i = 0; i < activity.getItemCount(); i++)
+		{
+			Act a = activity.getItemAt(i);
+			if (a != null && a.pickable() && a.name.equals(name))
+			{
+				return a;
+			}
+		}
+		return null;
 	}
 
 	private static String escape(String s)

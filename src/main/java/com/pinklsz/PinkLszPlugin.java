@@ -334,7 +334,15 @@ public class PinkLszPlugin extends Plugin
 		}
 	}
 
-	/** Inside a raid = a Chambers varbit, the Theatre varbit, or any instanced area that is not a player-owned house */
+	/**
+	 * The map regions inside the raids that aren't flagged by a varbit: Tombs of Amascut's rooms and the inside of the Fractured Archive.
+	 * Only these count, so other instances (a player-owned house, a boss instance, a minigame) are never "in a raid".
+	 */
+	private static final java.util.Set<Integer> RAID_REGIONS = new java.util.HashSet<>(java.util.Arrays.asList(
+		14160, 14162, 14164, 14672, 14674, 14676, 15184, 15186, 15188, 15696, 15698, 15700, // Tombs of Amascut
+		16471)); // the Fractured Archive (inside)
+
+	/** Inside a raid = the Chambers varbit, the Theatre varbit, or standing in one of the rooms above */
 	@Subscribe
 	public void onGameTick(GameTick e)
 	{
@@ -345,8 +353,7 @@ public class PinkLszPlugin extends Plugin
 			if (!in && client.isInInstancedRegion() && client.getLocalPlayer() != null)
 			{
 				net.runelite.api.coords.WorldPoint wp = net.runelite.api.coords.WorldPoint.fromLocalInstance(client, client.getLocalPlayer().getLocalLocation());
-				int r = wp == null ? 0 : wp.getRegionID();
-				in = r != 7513 && r != 7514 && r != 7769 && r != 7770 && r != 8025 && r != 8026; // houses
+				in = wp != null && RAID_REGIONS.contains(wp.getRegionID());
 			}
 		}
 		lobbyPanel.setInRaid(in);

@@ -6,7 +6,13 @@ All notable changes to the Pink LSZ plugin since it was published to the RuneLit
 
 - Fractured Archive times set in practice mode are no longer sent to the clan site.
 - Verzik's room time ("Wave 'The Final Challenge' complete!") is now recorded as the Verzik room, not as the whole Theatre of Blood raid time.
-- Team finder accepts worlds 301 to 700 (was 301 to 600).
+- Colosseum: the run's time is taken from the "Colosseum duration" line, never from a wave's own "Wave duration".
+- Team finder accepts worlds 301 to 700 (was 301 to 600), and total level worlds such as 373.
+- Hosts can change their team's size after making it (within the activity's limits, and never below the number of players already in it), without closing the team.
+- Hosts can make their team invite only (staff can do it on any team): only players the host invites from the available list can join. "Open to all" undoes it.
+- Learners in the available players list are listed separately, under everyone else, outlined in green.
+- Available players who are inside a raid show an "In raid" tag, like teams do.
+- "In raid" now only shows inside Chambers of Xeric, Theatre of Blood, Tombs of Amascut and the Fractured Archive. It no longer shows in a player-owned house or other instances.
 - Removed the "Add this character's name to your dashboard profile" chat message. Data for members who haven't logged in to the website yet is attached to their profile automatically when they first log in.
 
 ## 2.0.1
